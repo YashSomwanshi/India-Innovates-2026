@@ -1,0 +1,12 @@
+{
+  "name": "ai-avatar-platform",
+  "version": "1.0.0",
+  "description": "AI-Powered Avatar Civic Communication Platform — India Innovates 2026",
+  "scripts": {
+    "start": "node scripts/start-all.js",
+    "setup": "scripts/setup.bat",
+    "dev": "node scripts/start-all.js"
+  },
+  "keywords": ["ai", "avatar", "civic-tech", "multilingual", "governance"],
+  "license": "MIT"
+}

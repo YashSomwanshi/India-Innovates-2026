@@ -1,0 +1,11 @@
+{
+  "name": "llm-service",
+  "version": "1.0.0",
+  "description": "LLM service via Ollama/Llama3",
+  "main": "index.js",
+  "scripts": { "start": "node index.js" },
+  "dependencies": {
+    "express": "^4.21.0",
+    "cors": "^2.8.5"
+  }
+}
