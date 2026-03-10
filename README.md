@@ -313,7 +313,7 @@ DEFAULT_LANGUAGE=en
 
 
 <p align="center">
-  <b>Built with ❤️ for India Innovates 2026 — Civic Technology Hackathon</b>
+  <b>Built with ❤️ for India Innovates 2026 </b>
   <br/>
-  <sub>Empowering citizens through accessible, AI-driven governance communication</sub>
+
 </p>
