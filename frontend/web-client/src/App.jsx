@@ -291,9 +291,9 @@ export default function App() {
       {/* Header */}
       <header className="app-header">
         <div className="header-brand">
-          <div className="header-logo">D</div>
+          <div className="header-logo">A</div>
           <div>
-            <div className="header-title">Disha</div>
+            <div className="header-title">Ajay</div>
             <div className="header-subtitle">AI Civic Assistant</div>
           </div>
         </div>
@@ -325,7 +325,7 @@ export default function App() {
               </Canvas>
               <Loader />
             </div>
-            <div className="avatar-name">Disha</div>
+            <div className="avatar-name">Ajay</div>
             <div className="avatar-role">AI Civic Assistant • Government of India</div>
             <div className={`avatar-status ${isSpeaking ? 'speaking' : isListening ? 'listening' : isLoading ? 'thinking' : 'idle'}`}>
               <span className={`status-dot ${(isSpeaking || isLoading || isListening) ? 'pulse' : ''}`}></span>
@@ -379,7 +379,7 @@ export default function App() {
               <div style={{ textAlign: 'center', padding: '40px 16px', color: 'var(--text-muted)' }}>
                 <div style={{ fontSize: 40, marginBottom: 12 }}>🇮🇳</div>
                 <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 8, color: 'var(--text-secondary)' }}>
-                  Welcome to Disha
+                  Welcome to Ajay
                 </div>
                 <div style={{ fontSize: 12, lineHeight: 1.6 }}>
                   Ask me about government schemes, public services, or educational programs.
@@ -425,7 +425,7 @@ export default function App() {
               <button
                 className={`btn btn-icon btn-mic ${isListening ? 'recording' : ''}`}
                 onClick={() => { getAudioContext(); toggleListening(); }}
-                title={isListening ? 'Stop listening' : 'Speak to Disha'}
+                title={isListening ? 'Stop listening' : 'Speak to Ajay'}
                 id="mic-button"
               >
                 {isListening ? '⏹' : '🎤'}
@@ -435,7 +435,7 @@ export default function App() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder={isListening ? 'Listening... speak now' : `Ask Disha anything in ${langNames[language]}...`}
+                placeholder={isListening ? 'Listening... speak now' : `Ask Ajay anything in ${langNames[language]}...`}
                 rows={1}
                 disabled={isLoading}
                 id="text-input"

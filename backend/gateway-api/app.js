@@ -219,7 +219,7 @@ app.post('/api/pipeline', async (req, res) => {
     let audioUrl = null;
     try {
       const ttsResult = await callService('tts', '/synthesize', {
-        body: JSON.stringify({ text: finalResponse, language: targetLang }),
+        body: JSON.stringify({ text: finalResponse, language: targetLang, gender: 'male' }),
       });
       audioUrl = ttsResult.file_id ? `/api/audio/${ttsResult.file_id}` : null;
       stages.push({ stage: 'tts', time: Date.now() - startTime });
