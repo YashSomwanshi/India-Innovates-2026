@@ -291,11 +291,6 @@ DEFAULT_LANGUAGE=en
 
 ---
 
-## 📄 License
-
-This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
-
----
 
 <p align="center">
   <b>Built with ❤️ for India Innovates 2026 — Civic Technology Hackathon</b>
