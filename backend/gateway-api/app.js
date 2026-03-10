@@ -81,17 +81,15 @@ app.post('/api/speech-to-text', upload.single('audio'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No audio file' });
 
-    const FormData = (await import('form-data')).default;
-    const form = new FormData();
-    form.append('audio', req.file.buffer, {
-      filename: req.file.originalname || 'audio.wav',
-      contentType: req.file.mimetype || 'audio/wav',
-    });
+    // Use Node's built-in FormData + Blob (works with built-in fetch)
+    const form = new globalThis.FormData();
+    const blob = new Blob([req.file.buffer], { type: req.file.mimetype || 'audio/webm' });
+    const filename = req.file.originalname || 'recording.webm';
+    form.append('audio', blob, filename);
 
     const sttRes = await fetch(`${SERVICES.stt}/transcribe`, {
       method: 'POST',
       body: form,
-      headers: form.getHeaders(),
       signal: AbortSignal.timeout(60000),
     });
 
@@ -166,7 +164,8 @@ app.get('/api/audio/:fileId', async (req, res) => {
       signal: AbortSignal.timeout(10000),
     });
     if (!audioRes.ok) return res.status(404).json({ error: 'Audio not found' });
-    res.set('Content-Type', 'audio/mpeg');
+    const contentType = audioRes.headers.get('Content-Type') || 'audio/mpeg';
+    res.set('Content-Type', contentType);
     res.set('Cache-Control', 'public, max-age=3600');
     const buffer = Buffer.from(await audioRes.arrayBuffer());
     res.send(buffer);

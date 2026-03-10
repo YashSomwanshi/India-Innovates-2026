@@ -13,26 +13,46 @@ const QUICK_QUESTIONS = [
   'How does Skill India work?',
 ];
 
+// Language codes for Web Speech API
+const SPEECH_LANG_MAP = {
+  en: 'en-IN',
+  hi: 'hi-IN',
+  mr: 'mr-IN',
+  ta: 'ta-IN',
+  te: 'te-IN',
+  bn: 'bn-IN',
+};
+
 export default function App() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [language, setLanguage] = useState('en');
   const [isLoading, setIsLoading] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
-  const [isListening, setIsListening] = useState(false); // Auto-listen mode
+  const [isListening, setIsListening] = useState(false);
   const [pipelineStage, setPipelineStage] = useState(null);
   const [serviceHealth, setServiceHealth] = useState({});
-  const [conversationMode, setConversationMode] = useState(false); // Talking Tom mode
+  const [conversationMode, setConversationMode] = useState(false);
 
   const chatEndRef = useRef(null);
   const audioRef = useRef(null);
-  const mediaRecorderRef = useRef(null);
-  const chunksRef = useRef([]);
+  const recognitionRef = useRef(null);
 
   // Single shared AudioContext + Analyser (persists across all audio plays)
   const audioCtxRef = useRef(null);
   const analyserRef = useRef(null);
+
+  // Refs to always have the latest values in speech recognition callbacks
+  const isLoadingRef = useRef(false);
+  const isSpeakingRef = useRef(false);
+  const conversationModeRef = useRef(false);
+  const languageRef = useRef('en');
+
+  // Keep refs in sync with state
+  useEffect(() => { isLoadingRef.current = isLoading; }, [isLoading]);
+  useEffect(() => { isSpeakingRef.current = isSpeaking; }, [isSpeaking]);
+  useEffect(() => { conversationModeRef.current = conversationMode; }, [conversationMode]);
+  useEffect(() => { languageRef.current = language; }, [language]);
 
   // Initialize shared AudioContext once
   function getAudioContext() {
@@ -74,7 +94,7 @@ export default function App() {
     }
   }
 
-  // Send text message through pipeline
+  // ─── Send text message through pipeline ───
   const sendMessage = useCallback(async (text) => {
     if (!text.trim() || isLoading) return;
 
@@ -140,6 +160,10 @@ export default function App() {
     }
   }, [language, messages, isLoading, conversationMode]);
 
+  // Keep a ref so speech recognition callbacks always see the latest sendMessage
+  const sendMessageRef = useRef(sendMessage);
+  useEffect(() => { sendMessageRef.current = sendMessage; }, [sendMessage]);
+
   // ─── Play audio with shared AudioContext ───
   function playAudio(url) {
     // Stop any current audio
@@ -166,130 +190,85 @@ export default function App() {
     audio.play().catch((e) => {
       console.warn('Audio play failed:', e);
       setIsSpeaking(false);
-      // If play failed and in conversation mode, still auto-listen
       if (conversationMode) setTimeout(() => startListening(), 500);
     });
 
     audio.onended = () => {
       setIsSpeaking(false);
       // Auto-listen after speaking (Talking Tom mode)
-      if (conversationMode) {
+      if (conversationModeRef.current) {
         setTimeout(() => startListening(), 600);
       }
     };
 
     audio.onerror = () => {
       setIsSpeaking(false);
-      if (conversationMode) setTimeout(() => startListening(), 500);
+      if (conversationModeRef.current) setTimeout(() => startListening(), 500);
     };
   }
 
-  // ─── Auto-listen (start recording automatically) ───
-  async function startListening() {
-    if (isLoading || isSpeaking || isRecording) return;
+  // ─── Web Speech API: start listening ───
+  function startListening() {
+    if (isLoadingRef.current || isSpeakingRef.current || recognitionRef.current) return;
 
-    try {
-      setIsListening(true);
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-      mediaRecorderRef.current = recorder;
-      chunksRef.current = [];
-
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data);
-      };
-
-      recorder.onstop = async () => {
-        stream.getTracks().forEach(t => t.stop());
-        setIsListening(false);
-        setIsRecording(false);
-        const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
-        if (blob.size > 1000) { // Only send if there's meaningful audio
-          await sendAudio(blob);
-        }
-      };
-
-      recorder.start();
-      setIsRecording(true);
-
-      // Auto-stop after 8 seconds of silence / max recording
-      setTimeout(() => {
-        if (recorder.state === 'recording') {
-          recorder.stop();
-        }
-      }, 8000);
-
-    } catch (err) {
-      console.error('Auto-listen error:', err);
-      setIsListening(false);
-    }
-  }
-
-  // Manual toggle recording
-  async function toggleRecording() {
-    if (isRecording) {
-      mediaRecorderRef.current?.stop();
-      setIsRecording(false);
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      console.error('Speech Recognition not supported in this browser.');
       return;
     }
 
-    try {
-      // Resume AudioContext on user gesture
-      getAudioContext();
+    const recognition = new SpeechRecognition();
+    recognition.lang = SPEECH_LANG_MAP[languageRef.current] || 'en-IN';
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
 
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-      mediaRecorderRef.current = recorder;
-      chunksRef.current = [];
+    recognitionRef.current = recognition;
+    setIsListening(true);
 
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data);
-      };
+    let finalTranscript = '';
 
-      recorder.onstop = async () => {
-        stream.getTracks().forEach(t => t.stop());
-        const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
-        await sendAudio(blob);
-      };
+    recognition.onresult = (event) => {
+      let interim = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalTranscript += transcript;
+        } else {
+          interim += transcript;
+        }
+      }
+      // Show interim text in the input box as live preview
+      setInput(finalTranscript + interim);
+    };
 
-      recorder.start();
-      setIsRecording(true);
-    } catch (err) {
-      console.error('Mic error:', err);
-    }
+    recognition.onend = () => {
+      recognitionRef.current = null;
+      setIsListening(false);
+      // If we got a final transcript, send it as a message
+      if (finalTranscript.trim()) {
+        setInput('');
+        sendMessageRef.current(finalTranscript.trim());
+      }
+    };
+
+    recognition.onerror = (event) => {
+      console.error('Speech recognition error:', event.error);
+      recognitionRef.current = null;
+      setIsListening(false);
+    };
+
+    recognition.start();
   }
 
-  // Send audio for STT → Pipeline
-  async function sendAudio(blob) {
-    setIsLoading(true);
-    setPipelineStage('transcribing');
-
-    try {
-      const formData = new FormData();
-      formData.append('audio', blob, 'recording.webm');
-
-      const sttRes = await fetch(`${GATEWAY_URL}/api/speech-to-text`, {
-        method: 'POST',
-        body: formData,
-      });
-      const sttText = await sttRes.text();
-      let sttData;
-      try {
-        sttData = JSON.parse(sttText);
-      } catch {
-        throw new Error('STT service not responding');
-      }
-
-      if (sttData.text) {
-        await sendMessage(sttData.text);
-      } else {
-        throw new Error('Could not transcribe audio');
-      }
-    } catch (err) {
-      console.error('STT error:', err);
-      setIsLoading(false);
-      setPipelineStage(null);
+  // ─── Toggle speech recognition on mic button click ───
+  function toggleListening() {
+    if (recognitionRef.current) {
+      // Stop listening — this triggers onend which will send the transcript
+      recognitionRef.current.stop();
+      return;
     }
+    startListening();
   }
 
   // Handle Enter key
@@ -347,8 +326,6 @@ export default function App() {
             {/* Pipeline Status */}
             {isLoading && (
               <div className="pipeline-status">
-                <span className={`pipeline-step ${pipelineStage === 'transcribing' ? 'active' : pipelineStage !== 'transcribing' ? 'done' : ''}`}>STT</span>
-                <span className="pipeline-arrow">→</span>
                 <span className={`pipeline-step ${pipelineStage === 'thinking' ? 'active' : ''}`}>LLM</span>
                 <span className="pipeline-arrow">→</span>
                 <span className={`pipeline-step ${pipelineStage === 'synthesizing' ? 'active' : ''}`}>TTS</span>
@@ -398,7 +375,7 @@ export default function App() {
                 <div style={{ fontSize: 12, lineHeight: 1.6 }}>
                   Ask me about government schemes, public services, or educational programs.
                   <br /><br />
-                  <strong>💡 Tip:</strong> Enable <em>Conversation Mode</em> for hands-free, two-way chat — Disha will automatically listen after speaking!
+                  <strong>💡 Tip:</strong> Click the 🎤 mic button and speak — your speech is converted to text and sent automatically!
                 </div>
               </div>
             )}
@@ -437,19 +414,19 @@ export default function App() {
 
             <div className="input-row">
               <button
-                className={`btn btn-icon btn-mic ${isRecording ? 'recording' : ''}`}
-                onClick={() => { getAudioContext(); toggleRecording(); }}
-                title={isRecording ? 'Stop recording' : 'Start recording'}
+                className={`btn btn-icon btn-mic ${isListening ? 'recording' : ''}`}
+                onClick={() => { getAudioContext(); toggleListening(); }}
+                title={isListening ? 'Stop listening' : 'Speak to Disha'}
                 id="mic-button"
               >
-                {isRecording ? '⏹' : '🎤'}
+                {isListening ? '⏹' : '🎤'}
               </button>
               <textarea
                 className="text-input"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder={`Ask Disha anything in ${langNames[language]}...`}
+                placeholder={isListening ? 'Listening... speak now' : `Ask Disha anything in ${langNames[language]}...`}
                 rows={1}
                 disabled={isLoading}
                 id="text-input"
