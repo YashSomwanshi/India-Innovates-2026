@@ -5,7 +5,7 @@ import { Leva } from 'leva';
 import { Scenario } from './components/Scenario';
 import LanguageSelector from './components/LanguageSelector';
 
-const GATEWAY_URL = '';  // Uses Vite proxy
+const GATEWAY_URL = '';
 
 const QUICK_QUESTIONS = [
   'What is Digital India?',
@@ -16,15 +16,18 @@ const QUICK_QUESTIONS = [
   'How does Skill India work?',
 ];
 
-// Language codes for Web Speech API
 const SPEECH_LANG_MAP = {
-  en: 'en-IN',
-  hi: 'hi-IN',
-  mr: 'mr-IN',
-  ta: 'ta-IN',
-  te: 'te-IN',
-  bn: 'bn-IN',
+  en: 'en-IN', hi: 'hi-IN', mr: 'mr-IN', ta: 'ta-IN', te: 'te-IN', bn: 'bn-IN',
 };
+
+const BACKGROUNDS = [
+  { id: 'none', label: 'None', value: null },
+  { id: 'gradient', label: 'Gradient', value: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)' },
+  { id: 'office', label: 'Office', value: 'url(/backgrounds/office.png)' },
+  { id: 'workspace', label: 'Workspace', value: 'url(/backgrounds/workspace.png)' },
+  { id: 'conference', label: 'Conference', value: 'url(/backgrounds/conference.png)' },
+  { id: 'library', label: 'Library', value: 'url(/backgrounds/library.png)' },
+];
 
 export default function App() {
   const [messages, setMessages] = useState([]);
@@ -37,27 +40,29 @@ export default function App() {
   const [serviceHealth, setServiceHealth] = useState({});
   const [conversationMode, setConversationMode] = useState(false);
 
+  // UI state
+  const [chatOpen, setChatOpen] = useState(false);
+  const [bgPanelOpen, setBgPanelOpen] = useState(false);
+  const [selectedBg, setSelectedBg] = useState('none');
+  const [customBg, setCustomBg] = useState(null);
+
   const chatEndRef = useRef(null);
   const audioRef = useRef(null);
   const recognitionRef = useRef(null);
-
-  // Single shared AudioContext + Analyser (persists across all audio plays)
   const audioCtxRef = useRef(null);
   const analyserRef = useRef(null);
+  const fileInputRef = useRef(null);
 
-  // Refs to always have the latest values in speech recognition callbacks
   const isLoadingRef = useRef(false);
   const isSpeakingRef = useRef(false);
   const conversationModeRef = useRef(false);
   const languageRef = useRef('en');
 
-  // Keep refs in sync with state
   useEffect(() => { isLoadingRef.current = isLoading; }, [isLoading]);
   useEffect(() => { isSpeakingRef.current = isSpeaking; }, [isSpeaking]);
   useEffect(() => { conversationModeRef.current = conversationMode; }, [conversationMode]);
   useEffect(() => { languageRef.current = language; }, [language]);
 
-  // Initialize shared AudioContext once
   function getAudioContext() {
     if (!audioCtxRef.current) {
       const AC = window.AudioContext || window.webkitAudioContext;
@@ -68,19 +73,12 @@ export default function App() {
       analyser.connect(audioCtxRef.current.destination);
       analyserRef.current = analyser;
     }
-    // Resume if suspended (browser autoplay policy)
-    if (audioCtxRef.current.state === 'suspended') {
-      audioCtxRef.current.resume();
-    }
+    if (audioCtxRef.current.state === 'suspended') audioCtxRef.current.resume();
     return { ctx: audioCtxRef.current, analyser: analyserRef.current };
   }
 
-  // Scroll to bottom on new messages
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
-  // Health check on load
   useEffect(() => {
     checkHealth();
     const interval = setInterval(checkHealth, 30000);
@@ -92,366 +90,280 @@ export default function App() {
       const res = await fetch(`${GATEWAY_URL}/api/health`);
       const data = await res.json();
       setServiceHealth(data.services || {});
-    } catch {
-      setServiceHealth({});
-    }
+    } catch { setServiceHealth({}); }
   }
 
-  // ─── Send text message through pipeline ───
   const sendMessage = useCallback(async (text) => {
     if (!text.trim() || isLoading) return;
-
     const userMsg = { role: 'user', content: text.trim(), time: new Date().toLocaleTimeString() };
     setMessages(prev => [...prev, userMsg]);
     setInput('');
     setIsLoading(true);
     setPipelineStage('thinking');
-
     try {
       const res = await fetch(`${GATEWAY_URL}/api/pipeline`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message: text.trim(),
-          language,
+          message: text.trim(), language,
           history: messages.slice(-10).map(m => ({ role: m.role, content: m.content })),
         }),
       });
-
       const text2 = await res.text();
       let data;
-      try {
-        data = JSON.parse(text2);
-      } catch {
-        throw new Error('Gateway is not responding. Run: node scripts/start-all.js');
-      }
-
+      try { data = JSON.parse(text2); } catch { throw new Error('Gateway is not responding.'); }
       if (data.error) throw new Error(data.error);
-
       const assistantMsg = {
-        role: 'assistant',
-        content: data.response,
-        time: new Date().toLocaleTimeString(),
-        audioUrl: data.audio_url,
+        role: 'assistant', content: data.response,
+        time: new Date().toLocaleTimeString(), audioUrl: data.audio_url,
         pipelineTime: data.pipeline?.total_time_ms,
       };
-
       setMessages(prev => [...prev, assistantMsg]);
       setPipelineStage(null);
-
-      // Play audio if available
-      if (data.audio_url) {
-        playAudio(data.audio_url);
-      } else {
-        // No audio — if conversation mode, auto-listen
-        if (conversationMode) {
-          setTimeout(() => startListening(), 500);
-        }
-      }
-
+      if (data.audio_url) playAudio(data.audio_url);
+      else if (conversationMode) setTimeout(() => startListening(), 500);
     } catch (err) {
-      console.error('Pipeline error:', err);
       setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: `Sorry, I encountered an error: ${err.message}. Please make sure all services are running.`,
-        time: new Date().toLocaleTimeString(),
-        isError: true,
+        role: 'assistant', content: `Error: ${err.message}`,
+        time: new Date().toLocaleTimeString(), isError: true,
       }]);
       setPipelineStage(null);
-    } finally {
-      setIsLoading(false);
-    }
+    } finally { setIsLoading(false); }
   }, [language, messages, isLoading, conversationMode]);
 
-  // Keep a ref so speech recognition callbacks always see the latest sendMessage
   const sendMessageRef = useRef(sendMessage);
   useEffect(() => { sendMessageRef.current = sendMessage; }, [sendMessage]);
 
-  // ─── Play audio with shared AudioContext ───
   function playAudio(url) {
-    // Stop any current audio
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.onended = null;
-      audioRef.current.onerror = null;
-    }
-
+    if (audioRef.current) { audioRef.current.pause(); audioRef.current.onended = null; audioRef.current.onerror = null; }
     const { ctx, analyser } = getAudioContext();
     const audio = new Audio(url);
-
-    // Connect this audio element to our shared analyser
-    try {
-      const source = ctx.createMediaElementSource(audio);
-      source.connect(analyser);  // analyser already connected to destination
-    } catch (e) {
-      console.warn('AudioContext connection failed:', e);
-    }
-
+    try { const source = ctx.createMediaElementSource(audio); source.connect(analyser); } catch (e) { console.warn('AudioContext error:', e); }
     audioRef.current = audio;
     setIsSpeaking(true);
-
-    audio.play().catch((e) => {
-      console.warn('Audio play failed:', e);
-      setIsSpeaking(false);
-      if (conversationMode) setTimeout(() => startListening(), 500);
-    });
-
-    audio.onended = () => {
-      setIsSpeaking(false);
-      // Auto-listen after speaking (Talking Tom mode)
-      if (conversationModeRef.current) {
-        setTimeout(() => startListening(), 600);
-      }
-    };
-
-    audio.onerror = () => {
-      setIsSpeaking(false);
-      if (conversationModeRef.current) setTimeout(() => startListening(), 500);
-    };
+    audio.play().catch(() => { setIsSpeaking(false); if (conversationMode) setTimeout(() => startListening(), 500); });
+    audio.onended = () => { setIsSpeaking(false); if (conversationModeRef.current) setTimeout(() => startListening(), 600); };
+    audio.onerror = () => { setIsSpeaking(false); if (conversationModeRef.current) setTimeout(() => startListening(), 500); };
   }
 
-  // ─── Web Speech API: start listening ───
   function startListening() {
     if (isLoadingRef.current || isSpeakingRef.current || recognitionRef.current) return;
-
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      console.error('Speech Recognition not supported in this browser.');
-      return;
-    }
-
-    const recognition = new SpeechRecognition();
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return;
+    const recognition = new SR();
     recognition.lang = SPEECH_LANG_MAP[languageRef.current] || 'en-IN';
     recognition.continuous = false;
     recognition.interimResults = true;
     recognition.maxAlternatives = 1;
-
     recognitionRef.current = recognition;
     setIsListening(true);
-
     let finalTranscript = '';
-
     recognition.onresult = (event) => {
       let interim = '';
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          finalTranscript += transcript;
-        } else {
-          interim += transcript;
-        }
+        const t = event.results[i][0].transcript;
+        if (event.results[i].isFinal) finalTranscript += t; else interim += t;
       }
-      // Show interim text in the input box as live preview
       setInput(finalTranscript + interim);
     };
-
     recognition.onend = () => {
-      recognitionRef.current = null;
-      setIsListening(false);
-      // If we got a final transcript, send it as a message
-      if (finalTranscript.trim()) {
-        setInput('');
-        sendMessageRef.current(finalTranscript.trim());
-      }
+      recognitionRef.current = null; setIsListening(false);
+      if (finalTranscript.trim()) { setInput(''); sendMessageRef.current(finalTranscript.trim()); }
     };
-
-    recognition.onerror = (event) => {
-      console.error('Speech recognition error:', event.error);
-      recognitionRef.current = null;
-      setIsListening(false);
-    };
-
+    recognition.onerror = () => { recognitionRef.current = null; setIsListening(false); };
     recognition.start();
   }
 
-  // ─── Toggle speech recognition on mic button click ───
   function toggleListening() {
-    if (recognitionRef.current) {
-      // Stop listening — this triggers onend which will send the transcript
-      recognitionRef.current.stop();
-      return;
-    }
+    if (recognitionRef.current) { recognitionRef.current.stop(); return; }
     startListening();
   }
 
-  // Handle Enter key
   function handleKeyDown(e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      // Resume AudioContext on user gesture
-      getAudioContext();
-      sendMessage(input);
-    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); getAudioContext(); sendMessage(input); }
+  }
+
+  // Background helpers
+  function getBackgroundStyle() {
+    if (customBg) return { backgroundImage: `url(${customBg})`, backgroundSize: 'cover', backgroundPosition: 'center' };
+    const bg = BACKGROUNDS.find(b => b.id === selectedBg);
+    if (!bg || !bg.value) return {};
+    if (bg.value.startsWith('url')) return { backgroundImage: bg.value, backgroundSize: 'cover', backgroundPosition: 'center' };
+    return { background: bg.value };
+  }
+
+  function handleCustomBgUpload(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => { setCustomBg(reader.result); setSelectedBg('custom'); };
+    reader.readAsDataURL(file);
   }
 
   const langNames = { en: 'English', hi: 'Hindi', mr: 'Marathi', ta: 'Tamil', te: 'Telugu', bn: 'Bengali' };
 
   return (
-    <div className="app-container">
-      {/* Header */}
-      <header className="app-header">
-        <div className="header-brand">
-          <div className="header-logo">A</div>
-          <div>
-            <div className="header-title">Ajay</div>
-            <div className="header-subtitle">AI Civic Assistant</div>
+    <div className="app">
+      <Leva collapsed hidden />
+
+      {/* ══ Header ══ */}
+      <header className="header">
+        <div className="header-left">
+          <div className="logo">A</div>
+          <div className="logo-text">
+            <span className="logo-name">Ajay</span>
+            <span className="logo-sub">AI Civic Assistant</span>
           </div>
         </div>
-
-        <div className="header-controls">
-          <div className="service-status">
-            {Object.entries(serviceHealth).map(([name, info]) => (
-              <span key={name} className={`service-badge ${info.status === 'ok' ? 'ok' : 'error'}`}>
-                <span className="status-dot" style={{ width: 5, height: 5, borderRadius: '50%', background: 'currentColor', display: 'inline-block' }}></span>
-                {name}
-              </span>
-            ))}
-          </div>
+        <div className="header-right">
           <LanguageSelector language={language} onChange={setLanguage} />
+          <button className="hdr-btn" onClick={() => setBgPanelOpen(p => !p)} title="Virtual Background">
+            🖼️ Background
+          </button>
+          <button className={`hdr-btn ${chatOpen ? 'active' : ''}`} onClick={() => setChatOpen(p => !p)} title="Toggle Chat">
+            💬 Chat
+          </button>
         </div>
       </header>
 
-      {/* Main Content */}
-      <div className="main-content">
-        {/* Avatar Panel */}
-        <div className="avatar-panel">
-          <div className="avatar-container">
-            <Leva collapsed hidden />
-            <div className={`avatar-canvas-wrap ${isSpeaking ? 'speaking' : ''} ${isListening ? 'listening' : ''}`} style={{ background: '#0a0e1a' }}>
-              <Canvas shadows camera={{ position: [0, 0, 0], fov: 10 }} style={{ width: '100%', height: '100%' }}>
-                <Suspense fallback={null}>
-                  <Scenario isSpeaking={isSpeaking} isListening={isListening} analyserRef={analyserRef} />
-                </Suspense>
-              </Canvas>
-              <Loader />
-            </div>
-            <div className="avatar-name">Ajay</div>
-            <div className="avatar-role">AI Civic Assistant • Government of India</div>
-            <div className={`avatar-status ${isSpeaking ? 'speaking' : isListening ? 'listening' : isLoading ? 'thinking' : 'idle'}`}>
-              <span className={`status-dot ${(isSpeaking || isLoading || isListening) ? 'pulse' : ''}`}></span>
-              {isSpeaking ? '🔊 Speaking...' : isListening ? '🎙️ Listening...' : isLoading ? (pipelineStage || 'Processing...') : 'Ready to help'}
-            </div>
+      {/* ══ Main Area ══ */}
+      <div className={`main ${chatOpen ? 'chat-visible' : ''}`}>
 
-            {/* Pipeline Status */}
-            {isLoading && (
-              <div className="pipeline-status">
-                <span className={`pipeline-step ${pipelineStage === 'thinking' ? 'active' : ''}`}>LLM</span>
-                <span className="pipeline-arrow">→</span>
-                <span className={`pipeline-step ${pipelineStage === 'synthesizing' ? 'active' : ''}`}>TTS</span>
-              </div>
-            )}
-
-            {/* Conversation Mode Toggle */}
-            <button
-              className={`btn conversation-toggle ${conversationMode ? 'active' : ''}`}
-              onClick={() => {
-                getAudioContext(); // Resume on user gesture
-                setConversationMode(prev => !prev);
-              }}
-              style={{
-                marginTop: 12,
-                fontSize: 12,
-                padding: '6px 16px',
-                background: conversationMode ? 'rgba(16,185,129,0.2)' : 'rgba(255,255,255,0.05)',
-                border: conversationMode ? '1px solid rgba(16,185,129,0.5)' : '1px solid rgba(255,255,255,0.1)',
-                color: conversationMode ? '#10b981' : 'var(--text-muted)',
-                borderRadius: 20,
-                cursor: 'pointer',
-                transition: 'all 0.3s ease',
-              }}
-            >
-              {conversationMode ? '🔄 Conversation Mode ON' : '💬 Enable Conversation Mode'}
-            </button>
+        {/* ── Avatar Stage ── */}
+        <div className="stage">
+          <div className="video-window" style={getBackgroundStyle()}>
+            <Canvas shadows camera={{ position: [0, 0, 0], fov: 10 }} style={{ width: '100%', height: '100%' }}>
+              <Suspense fallback={null}>
+                <Scenario isSpeaking={isSpeaking} isListening={isListening} analyserRef={analyserRef} />
+              </Suspense>
+            </Canvas>
+            <Loader />
           </div>
+
+          {/* Name under video */}
+          <div className="nameplate">
+            <h1>Ajay</h1>
+            <p>AI Civic Assistant · Government of India</p>
+          </div>
+
+          {/* Status indicator */}
+          {(isSpeaking || isListening || isLoading) && (
+            <div className={`status-pill ${isSpeaking ? 'speaking' : isListening ? 'listening' : 'thinking'}`}>
+              {isSpeaking && <><div className="bars"><span/><span/><span/><span/><span/></div> Speaking</>}
+              {isListening && <><div className="pulse-dot"/> Listening…</>}
+              {isLoading && !isSpeaking && !isListening && <><div className="dots"><span/><span/><span/></div> Thinking</>}
+            </div>
+          )}
+
+          {/* ── Mic Button (centered below avatar) ── */}
+          <button
+            className={`mic-main ${isListening ? 'active' : ''} ${isSpeaking ? 'speaking' : ''}`}
+            onClick={() => { getAudioContext(); toggleListening(); }}
+            disabled={isLoading && !isListening}
+            title={isListening ? 'Stop listening' : 'Speak to Ajay'}
+            id="mic-button"
+          >
+            {isListening ? '⏹' : '🎤'}
+          </button>
+
+          {/* Conversation mode toggle */}
+          <button
+            className={`auto-btn ${conversationMode ? 'on' : ''}`}
+            onClick={() => { getAudioContext(); setConversationMode(p => !p); }}
+          >
+            {conversationMode ? '🔄 Auto-conversation ON' : '💬 Auto-conversation OFF'}
+          </button>
         </div>
 
-        {/* Chat Panel */}
-        <div className="chat-panel">
-          <div className="chat-header">
-            💬 Conversation
-            <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-muted)' }}>
-              {langNames[language]}
-            </span>
+        {/* ── Chat Panel (slides from right) ── */}
+        <aside className={`chat-panel ${chatOpen ? 'open' : ''}`}>
+          <div className="chat-top">
+            <span className="chat-title">Chat</span>
+            <button className="chat-close" onClick={() => setChatOpen(false)}>✕</button>
           </div>
 
-          <div className="chat-messages">
+          <div className="chat-msgs">
             {messages.length === 0 && (
-              <div style={{ textAlign: 'center', padding: '40px 16px', color: 'var(--text-muted)' }}>
-                <div style={{ fontSize: 40, marginBottom: 12 }}>🇮🇳</div>
-                <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 8, color: 'var(--text-secondary)' }}>
-                  Welcome to Ajay
-                </div>
-                <div style={{ fontSize: 12, lineHeight: 1.6 }}>
-                  Ask me about government schemes, public services, or educational programs.
-                  <br /><br />
-                  <strong>💡 Tip:</strong> Click the 🎤 mic button and speak — your speech is converted to text and sent automatically!
+              <div className="empty">
+                <div className="empty-icon">🇮🇳</div>
+                <h3>Welcome</h3>
+                <p>Ask Ajay about government schemes, public services, or educational programs.</p>
+                <div className="chips">
+                  {QUICK_QUESTIONS.map((q, i) => (
+                    <button key={i} className="chip" onClick={() => { getAudioContext(); sendMessage(q); }}>{q}</button>
+                  ))}
                 </div>
               </div>
             )}
 
             {messages.map((msg, i) => (
-              <div key={i} className={`message ${msg.role}`}>
-                <div>{msg.content}</div>
-                <div className="message-meta">
-                  {msg.time}
-                  {msg.pipelineTime && ` • ${(msg.pipelineTime / 1000).toFixed(1)}s`}
+              <div key={i} className={`msg ${msg.role}`}>
+                {msg.role === 'assistant' && <div className="msg-avatar">A</div>}
+                <div className="msg-body">
+                  <div className="msg-text">{msg.content}</div>
+                  <div className="msg-time">{msg.time}{msg.pipelineTime && ` · ${(msg.pipelineTime/1000).toFixed(1)}s`}</div>
                 </div>
               </div>
             ))}
 
             {isLoading && (
-              <div className="message assistant">
-                <div className="loading-dots">
-                  <span></span><span></span><span></span>
-                </div>
+              <div className="msg assistant">
+                <div className="msg-avatar">A</div>
+                <div className="msg-body"><div className="typing"><span/><span/><span/></div></div>
               </div>
             )}
-
             <div ref={chatEndRef} />
           </div>
 
-          {/* Input Area */}
-          <div className="chat-input-area">
-            {/* Quick Actions */}
-            {messages.length === 0 && (
-              <div className="quick-actions">
-                {QUICK_QUESTIONS.map((q, i) => (
-                  <button key={i} className="quick-btn" onClick={() => { getAudioContext(); sendMessage(q); }}>{q}</button>
-                ))}
-              </div>
-            )}
-
-            <div className="input-row">
-              <button
-                className={`btn btn-icon btn-mic ${isListening ? 'recording' : ''}`}
-                onClick={() => { getAudioContext(); toggleListening(); }}
-                title={isListening ? 'Stop listening' : 'Speak to Ajay'}
-                id="mic-button"
-              >
-                {isListening ? '⏹' : '🎤'}
-              </button>
+          <div className="chat-input">
+            <div className="input-wrap">
               <textarea
-                className="text-input"
+                className="input-field"
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
+                onChange={e => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder={isListening ? 'Listening... speak now' : `Ask Ajay anything in ${langNames[language]}...`}
+                placeholder="Ask Ajay anything…"
                 rows={1}
                 disabled={isLoading}
                 id="text-input"
               />
-              <button
-                className="btn btn-primary"
-                onClick={() => { getAudioContext(); sendMessage(input); }}
-                disabled={!input.trim() || isLoading}
-                id="send-button"
-              >
-                Send
-              </button>
+              <button className="send-btn" onClick={() => { getAudioContext(); sendMessage(input); }} disabled={!input.trim() || isLoading} id="send-button">➤</button>
             </div>
           </div>
-        </div>
+        </aside>
       </div>
+
+      {/* ══ Background Selector Panel ══ */}
+      {bgPanelOpen && (
+        <div className="bg-overlay" onClick={() => setBgPanelOpen(false)}>
+          <div className="bg-panel" onClick={e => e.stopPropagation()}>
+            <div className="bg-panel-header">
+              <span>Virtual Background</span>
+              <button className="bg-close" onClick={() => setBgPanelOpen(false)}>✕</button>
+            </div>
+            <div className="bg-grid">
+              {BACKGROUNDS.map(bg => (
+                <button
+                  key={bg.id}
+                  className={`bg-thumb ${selectedBg === bg.id && !customBg ? 'selected' : ''}`}
+                  onClick={() => { setSelectedBg(bg.id); setCustomBg(null); }}
+                  style={bg.value?.startsWith('url') ? { backgroundImage: bg.value, backgroundSize: 'cover', backgroundPosition: 'center' } : bg.value ? { background: bg.value } : {}}
+                >
+                  <span className="bg-label">{bg.label}</span>
+                </button>
+              ))}
+
+              {/* Custom upload */}
+              <button className={`bg-thumb upload ${customBg ? 'selected' : ''}`} onClick={() => fileInputRef.current?.click()}
+                style={customBg ? { backgroundImage: `url(${customBg})`, backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
+              >
+                <span className="bg-label">{customBg ? 'Custom' : '+ Upload'}</span>
+              </button>
+            </div>
+            <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleCustomBgUpload} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
