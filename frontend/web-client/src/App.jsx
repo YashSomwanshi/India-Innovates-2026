@@ -1,5 +1,8 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
-import AvatarCanvas from './components/AvatarCanvas';
+import { useState, useRef, useEffect, useCallback, Suspense } from 'react';
+import { Canvas } from '@react-three/fiber';
+import { Loader } from '@react-three/drei';
+import { Leva } from 'leva';
+import { Scenario } from './components/Scenario';
 import LanguageSelector from './components/LanguageSelector';
 
 const GATEWAY_URL = '';  // Uses Vite proxy
@@ -313,8 +316,14 @@ export default function App() {
         {/* Avatar Panel */}
         <div className="avatar-panel">
           <div className="avatar-container">
-            <div className={`avatar-canvas-wrap ${isSpeaking ? 'speaking' : ''} ${isListening ? 'listening' : ''}`}>
-              <AvatarCanvas isSpeaking={isSpeaking} isListening={isListening} analyserRef={analyserRef} />
+            <Leva collapsed hidden />
+            <div className={`avatar-canvas-wrap ${isSpeaking ? 'speaking' : ''} ${isListening ? 'listening' : ''}`} style={{ background: '#0a0e1a' }}>
+              <Canvas shadows camera={{ position: [0, 0, 0], fov: 10 }} style={{ width: '100%', height: '100%' }}>
+                <Suspense fallback={null}>
+                  <Scenario isSpeaking={isSpeaking} isListening={isListening} analyserRef={analyserRef} />
+                </Suspense>
+              </Canvas>
+              <Loader />
             </div>
             <div className="avatar-name">Disha</div>
             <div className="avatar-role">AI Civic Assistant • Government of India</div>
