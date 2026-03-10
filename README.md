@@ -25,6 +25,30 @@ An intelligent platform that helps Indian citizens understand government schemes
 
 ---
 
+## 📸 Screenshots
+
+<p align="center">
+  <img src="docs/screenshots/avatar-selection.png" alt="Avatar Selection Screen" width="90%" />
+  <br/><em>Avatar Selection — Choose from pre-built personas or create your own</em>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/video-call.png" alt="Video Call Interface" width="90%" />
+  <br/><em>Video Call Interface — Real-time 3D avatar with lip-sync animation</em>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/chat-panel.png" alt="Chat Panel" width="90%" />
+  <br/><em>Chat Panel — Text-based interaction with pipeline timing</em>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/avatar-creator.png" alt="Avatar Creator" width="90%" />
+  <br/><em>Avatar Creator — Build custom avatars with unique personalities</em>
+</p>
+
+---
+
 ## 🎭 Avatar Personas
 
 | Avatar | Name | Role | Focus Areas |
