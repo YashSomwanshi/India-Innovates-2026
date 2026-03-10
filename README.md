@@ -42,10 +42,6 @@ An intelligent platform that helps Indian citizens understand government schemes
   <br/><em>Chat Panel — Text-based interaction with pipeline timing</em>
 </p>
 
-<p align="center">
-  <img src="docs/screenshots/avatar-creator.png" alt="Avatar Creator" width="90%" />
-  <br/><em>Avatar Creator — Build custom avatars with unique personalities</em>
-</p>
 
 ---
 
