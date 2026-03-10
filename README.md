@@ -38,7 +38,7 @@ An intelligent platform that helps Indian citizens understand government schemes
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/chat-panel.png" alt="Chat Panel" width="90%" />
+  <img src="docs/screenshots/chat-panel.png" alt="Chat Panel" width="50%" />
   <br/><em>Chat Panel — Text-based interaction with pipeline timing</em>
 </p>
 
