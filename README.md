@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/badge/Open_Source-MIT-blue?style=for-the-badge" alt="MIT License" />
 </p>
 
-# 🇮🇳 AI Avatar Civic Communication Platform
+# AI Avatar Civic Communication Platform
 
 > **AI-powered multilingual avatar assistants for governance, education, and public outreach — running 100% locally with open-source models.**
 
