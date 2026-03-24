@@ -61,6 +61,65 @@ async function callService(name, endpoint, options = {}) {
   }
 }
 
+// ─── Helper: Live Data Fetching & Caching ───
+const liveDataCache = new Map();
+const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+
+function sanitizeHtml(str) {
+  if (!str) return '';
+  // Basic validation: strip HTML, multiple spaces, keep it alphanumeric + basic punctuation
+  return str.replace(/<\/?[^>]+(>|$)/g, "").replace(/\s+/g, " ").trim();
+}
+
+async function fetchLiveData(query) {
+  const q = query.toLowerCase();
+  
+  // 1. Check Cache (Layer 6)
+  if (liveDataCache.has(q)) {
+    const entry = liveDataCache.get(q);
+    if (Date.now() - entry.timestamp < CACHE_TTL) {
+      return entry.data;
+    }
+    liveDataCache.delete(q);
+  }
+
+  let structuredData = { source: 'fallback', data: [] };
+
+  try {
+    if (q.includes('weather')) {
+       // Open free weather API (extract city if present)
+       const cityMatch = q.match(/in\s+([a-zA-Z]+)/i) || q.match(/for\s+([a-zA-Z]+)/i);
+       const city = cityMatch ? cityMatch[1] : '';
+       const res = await fetch(`https://wttr.in/${city}?format=3`, { signal: AbortSignal.timeout(5000) });
+       if (res.ok) {
+         const text = await res.text();
+         if (text) structuredData = { source: 'weather', data: [text.trim()] };
+       }
+    } else {
+       // Mock fallback / Wikipedia search for generic news/info
+       const searchTerms = encodeURIComponent(query.replace(/(today|latest|current|recent|news|now|price|weather)/ig, '').trim() || 'India events');
+       const res = await fetch(`https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${searchTerms}&utf8=&format=json`, { signal: AbortSignal.timeout(5000) });
+       if (res.ok) {
+           const json = await res.json();
+           const snippet = sanitizeHtml(json.query?.search?.[0]?.snippet); // strip HTML safely (Layer 8)
+           if (snippet) {
+             structuredData = { source: 'search', data: [`Top search result for "${decodeURIComponent(searchTerms)}": ${snippet}`] };
+           }
+       }
+    }
+  } catch (err) {
+    console.error('[Gateway] Live Data API error:', err.message); // Fallback error logging (Layer 5)
+  }
+
+  // 2. Validate empty
+  if (!structuredData.data || structuredData.data.length === 0) {
+    structuredData = { source: 'fallback', data: [] };
+  }
+  
+  liveDataCache.set(q, { timestamp: Date.now(), data: structuredData });
+  return structuredData;
+}
+
 // ─── Health Check ───
 app.get('/api/health', async (req, res) => {
   const checks = {};
@@ -171,6 +230,169 @@ app.get('/api/audio/:fileId', async (req, res) => {
     res.send(buffer);
   } catch (err) {
     res.status(500).json({ error: 'Audio proxy error' });
+  }
+});
+
+// ─── Stream Pipeline (SSE) ───
+app.post('/api/stream', async (req, res) => {
+  const { message, language, history } = req.body;
+  if (!message) return res.status(400).json({ error: 'Missing "message"' });
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  const targetLang = language || 'en';
+
+  // 1. Check for quick cached queries (Layer 6 & 10)
+  const quickAnswers = {
+    'hi': 'Hello! How can I help you today?',
+    'hello': 'Hi there! What can I assist you with?',
+    'namaste': 'Namaste! How may I help you?',
+    'how are you': 'I am doing well, thank you for asking! How can I help you regarding government services?'
+  };
+  const lowerMsg = message.toLowerCase().trim();
+  if (quickAnswers[lowerMsg]) {
+    const ans = quickAnswers[lowerMsg];
+    res.write(`data: ${JSON.stringify({ type: 'text', chunk: ans })}\n\n`);
+    try {
+      const ttsResult = await callService('tts', '/synthesize', {
+        body: JSON.stringify({ text: ans, language: targetLang, gender: 'male' }),
+      });
+      if (ttsResult.file_id) {
+        res.write(`data: ${JSON.stringify({ type: 'audio', url: `/api/audio/${ttsResult.file_id}`, index: 0 })}\n\n`);
+      }
+    } catch (e) {
+      console.warn('TTS skip:', e.message);
+    }
+    res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
+    return res.end();
+  }
+
+  // 2. Stream from LLM
+  try {
+    let processedMessage = message;
+    if (targetLang !== 'en') {
+      const translateResult = await callService('translate', '/translate', {
+        body: JSON.stringify({ text: message, source_lang: targetLang, target_lang: 'en' }),
+      });
+      processedMessage = translateResult.translated_text || message;
+    }
+
+    const ttsTasks = [];
+    let sentenceIndex = 0;
+
+    const processSentence = async (sentence, idx) => {
+      let finalSentence = sentence;
+      if (targetLang !== 'en') {
+        try {
+          const tr = await callService('translate', '/translate', {
+             body: JSON.stringify({ text: sentence, source_lang: 'en', target_lang: targetLang }),
+          });
+          finalSentence = tr.translated_text || sentence;
+        } catch(e) {}
+      }
+      
+      try {
+        const ttsResult = await callService('tts', '/synthesize', {
+          body: JSON.stringify({ text: finalSentence, language: targetLang, gender: 'male' }),
+        });
+        if (ttsResult.file_id) {
+          res.write(`data: ${JSON.stringify({ type: 'audio', url: `/api/audio/${ttsResult.file_id}`, index: idx })}\n\n`);
+        }
+      } catch (e) {
+        // ignore TTS errors here
+      }
+    };
+
+    // Pre-filler for instant partial speech (Layer 5 / 7)
+    // Check for real-time intent to customize the filler
+    const liveDataKeywords = /(today|latest|current|recent|news|now|price|weather)/i;
+    let fetchedData = { source: 'fallback', data: [] };
+    let isLiveDataQuery = liveDataKeywords.test(processedMessage);
+
+    console.log("Query:", processedMessage);                        // Layer 10
+    console.log("Use Live Data:", isLiveDataQuery);                 // Layer 10
+
+    if (targetLang === 'en') {
+       let filler = "";
+       if (isLiveDataQuery) {
+           filler = "Let me check the latest information. ";
+       } else {
+           const fillers = ["Sure let me think about that. ", "Let's take a look. ", "Okay, I can help with that. "];
+           filler = fillers[Math.floor(Math.random() * fillers.length)];
+       }
+       res.write(`data: ${JSON.stringify({ type: 'text', chunk: filler })}\n\n`);
+       ttsTasks.push(processSentence(filler.trim(), sentenceIndex++));
+    }
+
+    // 3. Real-Time Data Fetch (Layer 2 & 4)
+    if (isLiveDataQuery) {
+       fetchedData = await fetchLiveData(processedMessage);
+       console.log("Live Data:", fetchedData);                      // Layer 10
+    }
+
+    // We need to fetch from llm-service/generate-stream
+    const llmRes = await fetch(`${SERVICES.llm}/generate-stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+         message: processedMessage, 
+         language: 'en', 
+         history: history || [],
+         live_data: fetchedData // Layer 3: Augment LLM Input structured
+      }),
+    });
+
+    if (!llmRes.ok) throw new Error('LLM Stream failed');
+
+    const reader = llmRes.body.getReader();
+    const decoder = new TextDecoder();
+    
+    let buffer = '';
+    let jsonBuffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      jsonBuffer += decoder.decode(value, { stream: true });
+      const lines = jsonBuffer.split('\n');
+      jsonBuffer = lines.pop(); // keep incomplete line
+      
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const parsed = JSON.parse(line);
+          if (parsed.response) {
+            const token = parsed.response;
+            res.write(`data: ${JSON.stringify({ type: 'text', chunk: token })}\n\n`);
+            
+            buffer += token;
+            const sentenceMatch = buffer.match(/([^.?!]+[.?!]+(?:\s+|$))(.*)/);
+            if (sentenceMatch) {
+               const sentence = sentenceMatch[1];
+               buffer = sentenceMatch[2] || '';
+               ttsTasks.push(processSentence(sentence.trim(), sentenceIndex++));
+            }
+          }
+        } catch (e) {
+            // ignore JSON parse error on single events
+        }
+      }
+    }
+    
+    if (buffer.trim()) {
+      ttsTasks.push(processSentence(buffer.trim(), sentenceIndex++));
+    }
+    
+    // Wait for all TTS chunks to be sent
+    await Promise.allSettled(ttsTasks);
+    
+    res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
+    res.end();
+  } catch (err) {
+    res.write(`data: ${JSON.stringify({ type: 'error', error: err.message })}\n\n`);
+    res.end();
   }
 });
 

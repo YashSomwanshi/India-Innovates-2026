@@ -53,8 +53,8 @@ async function generateResponse(userMessage, language = 'en', conversationHistor
       prompt,
       stream: false,
       options: {
-        temperature: 0.7,
-        num_predict: 300,
+        temperature: 0.5,
+        num_predict: 150,
         top_p: 0.9,
       }
     })
@@ -114,6 +114,88 @@ app.post('/generate-response', async (req, res) => {
   } catch (err) {
     console.error('[LLM] Error:', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Generate streaming response
+app.post('/generate-stream', async (req, res) => {
+  try {
+    const { message, language, history, live_data } = req.body;
+    if (!message) return res.status(400).json({ error: 'Missing "message" field' });
+
+    let prompt = systemPrompt + '\n\n';
+    
+    // Layer 3 & 9: Augment LLM Input with real-time data
+    if (live_data && live_data.data && live_data.data.length > 0) {
+      prompt += `=========================================\n`;
+      prompt += `URGENT SYSTEM OVERRIDE - REAL-TIME DATA (Source: ${live_data.source}):\n`;
+      prompt += `You are an AI assistant with access to real-time data. Use the provided live_data to answer accurately.\n`;
+      prompt += `If live_data is present, prioritize it over general knowledge. If not sufficient, combine with your knowledge.\n\n`;
+      prompt += `LIVE_DATA:\n${live_data.data.join('\n')}\n`;
+      prompt += `=========================================\n\n`;
+    }
+
+    const langNames = { en: 'English', hi: 'Hindi', mr: 'Marathi', ta: 'Tamil', te: 'Telugu', bn: 'Bengali' };
+    const langName = langNames[language] || 'English';
+    prompt += `Respond in ${langName}.\n\n`;
+
+    const recentHistory = (history || []).slice(-6);
+    for (const msg of recentHistory) {
+      if (msg.role === 'system' && (!live_data || live_data.source === 'fallback')) {
+         // Skip system prompt history if real-time data already overrides behavior
+         prompt += `System: ${msg.content}\n`;
+      } else if (msg.role === 'user') {
+         prompt += `User: ${msg.content}\n`;
+      } else if (msg.role === 'assistant') {
+         prompt += `Assistant: ${msg.content}\n`;
+      }
+    }
+    prompt += `User: ${message}\nAssistant:`;
+
+    const ollamaRes = await fetch(`${OLLAMA_URL}/api/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: OLLAMA_MODEL,
+        prompt,
+        stream: true,
+        options: { temperature: 0.5, num_predict: 150, top_p: 0.9 }
+      })
+    });
+
+    if (!ollamaRes.ok) throw new Error(`Ollama error: ${ollamaRes.status}`);
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    // Proxy the NDJSON stream
+    const reader = ollamaRes.body.getReader();
+    const decoder = new TextDecoder();
+    let finalResponseAcc = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = decoder.decode(value, { stream: true });
+      res.write(chunk);
+      
+      // Parse NDJSON to extract actual text piece for logging (Layer 10)
+      const lines = chunk.split('\n').filter(Boolean);
+      for (const line of lines) {
+        try {
+          const json = JSON.parse(line);
+          if (json.response) finalResponseAcc += json.response;
+        } catch(e) {}
+      }
+    }
+    
+    console.log("Final Response:", finalResponseAcc.trim() || "<empty>"); // Layer 10 Logging
+    res.end();
+  } catch (err) {
+    console.error('[LLM Stream] Error:', err.message);
+    if (!res.headersSent) res.status(500).json({ error: err.message });
+    else res.end();
   }
 });
 

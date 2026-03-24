@@ -63,6 +63,15 @@ export default function App() {
   const conversationModeRef = useRef(false);
   const languageRef = useRef('en');
 
+  const micStreamRef = useRef(null);
+  const vadIntervalRef = useRef(null);
+  const silenceTimerRef = useRef(null);
+  const isUserSpeakingRef = useRef(false);
+  const abortControllerRef = useRef(null);
+  const latestInputRef = useRef('');
+
+  useEffect(() => { latestInputRef.current = input; }, [input]);
+
   useEffect(() => { isLoadingRef.current = isLoading; }, [isLoading]);
   useEffect(() => { isSpeakingRef.current = isSpeaking; }, [isSpeaking]);
   useEffect(() => { conversationModeRef.current = conversationMode; }, [conversationMode]);
@@ -98,6 +107,21 @@ export default function App() {
     } catch { setServiceHealth({}); }
   }
 
+  function stopAllSpeechAndAudio() {
+    isPlayingRef.current = false;
+    audioQueueRef.current = [];
+    if (audioRef.current) {
+        audioRef.current.pause();
+    }
+    setIsSpeaking(false);
+    if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+    }
+    setPipelineStage(null);
+    setIsLoading(false);
+  }
+
   // ── Avatar selection handler ──
   function handleAvatarSelect(avatar) {
     setActiveAvatar(avatar);
@@ -113,15 +137,23 @@ export default function App() {
       setCustomBg(null);
     }
     setScreen('call');
+    
+    // Start continuous listening with mic permission after transition
+    setTimeout(() => {
+        getAudioContext();
+        startContinuousListening();
+    }, 1000);
   }
 
   function handleBackToSelect() {
-    // Stop any playing audio
-    if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+    stopAllSpeechAndAudio();
+    if (micStreamRef.current) {
+        micStreamRef.current.getTracks().forEach(t => t.stop());
+        micStreamRef.current = null;
+    }
+    if (vadIntervalRef.current) clearInterval(vadIntervalRef.current);
     if (recognitionRef.current) { recognitionRef.current.stop(); recognitionRef.current = null; }
-    setIsSpeaking(false);
     setIsListening(false);
-    setIsLoading(false);
     setScreen('select');
   }
 
@@ -137,6 +169,50 @@ export default function App() {
     return history;
   }
 
+  const audioQueueRef = useRef([]);
+  const isPlayingRef = useRef(false);
+  const pipelineStageRef = useRef(null);
+  useEffect(() => { pipelineStageRef.current = pipelineStage; }, [pipelineStage]);
+
+  const processAudioQueue = () => {
+    if (isPlayingRef.current || audioQueueRef.current.length === 0) return;
+    isPlayingRef.current = true;
+    const url = audioQueueRef.current.shift();
+    
+    const { ctx, analyser } = getAudioContext();
+    const audio = new Audio(url);
+    try { const source = ctx.createMediaElementSource(audio); source.connect(analyser); } catch (e) { console.warn('AudioContext error:', e); }
+    audioRef.current = audio;
+    setIsSpeaking(true);
+    
+    audio.play().catch(() => {
+       isPlayingRef.current = false;
+       setIsSpeaking(false); 
+       processAudioQueue(); 
+    });
+    
+    audio.onended = () => {
+       isPlayingRef.current = false;
+       if (audioQueueRef.current.length > 0) {
+         processAudioQueue();
+       } else {
+         setIsSpeaking(false);
+       }
+    };
+    audio.onerror = () => {
+       isPlayingRef.current = false;
+       if (audioQueueRef.current.length > 0) processAudioQueue();
+       else setIsSpeaking(false);
+    };
+  };
+
+  const enqueueAudio = (url) => {
+    // If url is relative, prepend GATEWAY_URL (which is empty string right now anyway)
+    const fullUrl = url.startsWith('http') ? url : `${GATEWAY_URL}${url}`;
+    audioQueueRef.current.push(fullUrl);
+    processAudioQueue();
+  };
+
   const sendMessage = useCallback(async (text) => {
     if (!text.trim() || isLoading) return;
     const userMsg = { role: 'user', content: text.trim(), time: new Date().toLocaleTimeString() };
@@ -144,87 +220,185 @@ export default function App() {
     setInput('');
     setIsLoading(true);
     setPipelineStage('thinking');
+    setCurrentText('');
+    
+    const msgId = Date.now();
+    setMessages(prev => [...prev, { id: msgId, role: 'assistant', content: '', time: new Date().toLocaleTimeString() }]);
+
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+
     try {
-      const res = await fetch(`${GATEWAY_URL}/api/pipeline`, {
+      const res = await fetch(`${GATEWAY_URL}/api/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: abortController.signal,
         body: JSON.stringify({
           message: text.trim(),
           language,
           history: buildHistory(),
         }),
       });
-      const text2 = await res.text();
-      let data;
-      try { data = JSON.parse(text2); } catch { throw new Error('Gateway is not responding.'); }
-      if (data.error) throw new Error(data.error);
-      const assistantMsg = {
-        role: 'assistant', content: data.response,
-        time: new Date().toLocaleTimeString(), audioUrl: data.audio_url,
-        pipelineTime: data.pipeline?.total_time_ms,
-      };
-      setMessages(prev => [...prev, assistantMsg]);
-      setPipelineStage(null);
-      if (data.audio_url) {
-        setCurrentText(data.response || '');
-        playAudio(data.audio_url);
+      
+      if (!res.ok) throw new Error('Gateway is not responding.');
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let assistantText = '';
+      let jsonBuffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        jsonBuffer += decoder.decode(value, { stream: true });
+        const lines = jsonBuffer.split('\n');
+        jsonBuffer = lines.pop(); // Keep incomplete lines
+        
+        for (const line of lines) {
+           if (line.startsWith('data: ')) {
+              try {
+                 const data = JSON.parse(line.slice(6));
+                 if (data.type === 'text') {
+                    if (assistantText === '') {
+                       setIsLoading(false);
+                       setPipelineStage(null); 
+                    }
+                    assistantText += data.chunk;
+                    setCurrentText(assistantText);
+                    setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: assistantText } : m));
+                 } else if (data.type === 'audio') {
+                    enqueueAudio(data.url);
+                 } else if (data.type === 'done') {
+                    setIsLoading(false);
+                    setPipelineStage(null);
+                 } else if (data.type === 'error') {
+                    throw new Error(data.error);
+                 }
+              } catch (e) {}
+           }
+        }
       }
-      else if (conversationMode) setTimeout(() => startListening(), 500);
     } catch (err) {
-      setMessages(prev => [...prev, {
-        role: 'assistant', content: `Error: ${err.message}`,
-        time: new Date().toLocaleTimeString(), isError: true,
-      }]);
+      if (err.name === 'AbortError') {
+         // Interrupted, silently clean up
+         setMessages(prev => prev.filter(m => m.id !== msgId));
+      } else {
+         setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: `Error: ${err.message}`, isError: true } : m));
+      }
       setPipelineStage(null);
-    } finally { setIsLoading(false); }
+      setIsLoading(false);
+    }
   }, [language, messages, isLoading, conversationMode, activeAvatar]);
 
   const sendMessageRef = useRef(sendMessage);
   useEffect(() => { sendMessageRef.current = sendMessage; }, [sendMessage]);
 
-  function playAudio(url) {
-    if (audioRef.current) { audioRef.current.pause(); audioRef.current.onended = null; audioRef.current.onerror = null; }
-    const { ctx, analyser } = getAudioContext();
-    const audio = new Audio(url);
-    try { const source = ctx.createMediaElementSource(audio); source.connect(analyser); } catch (e) { console.warn('AudioContext error:', e); }
-    audioRef.current = audio;
-    setIsSpeaking(true);
-    audio.play().catch(() => { setIsSpeaking(false); setCurrentText(''); if (conversationMode) setTimeout(() => startListening(), 500); });
-    audio.onended = () => { setIsSpeaking(false); setCurrentText(''); if (conversationModeRef.current) setTimeout(() => startListening(), 600); };
-    audio.onerror = () => { setIsSpeaking(false); setCurrentText(''); if (conversationModeRef.current) setTimeout(() => startListening(), 500); };
-  }
+  function startContinuousListening() {
+    if (micStreamRef.current || recognitionRef.current) return;
 
-  function startListening() {
-    if (isLoadingRef.current || isSpeakingRef.current || recognitionRef.current) return;
+    setIsListening(true);
+    
+    // 1. Setup VAD (Volume polling)
+    navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+      micStreamRef.current = stream;
+      const { ctx } = getAudioContext();
+      const source = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 256;
+      source.connect(analyser);
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+      vadIntervalRef.current = setInterval(() => {
+        analyser.getByteFrequencyData(dataArray);
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+        const avgVolume = sum / dataArray.length;
+
+        const volumeThreshold = 5; // Adjust this if background noise is high
+        
+        if (avgVolume > volumeThreshold) {
+          if (!isUserSpeakingRef.current) {
+            isUserSpeakingRef.current = true;
+          }
+          if (silenceTimerRef.current) {
+            clearTimeout(silenceTimerRef.current);
+            silenceTimerRef.current = null;
+          }
+          
+          // --- INTERRUPTION LOGIC (LAYER 4) ---
+          if (isSpeakingRef.current || isLoadingRef.current || pipelineStageRef.current === 'thinking') {
+             stopAllSpeechAndAudio();
+             // Optional: flush SR transcript by restarting it
+             if (recognitionRef.current) {
+                 recognitionRef.current.stop();
+                 setTimeout(() => { try { recognitionRef.current.start(); } catch(e){} }, 100);
+             }
+          }
+        } else {
+          // Silence detected
+          if (isUserSpeakingRef.current && !silenceTimerRef.current) {
+            silenceTimerRef.current = setTimeout(() => {
+               isUserSpeakingRef.current = false;
+               silenceTimerRef.current = null;
+               
+               const finalTxt = latestInputRef.current.trim();
+               if (finalTxt) {
+                   sendMessageRef.current(finalTxt);
+                   setInput('');
+                   if (recognitionRef.current) {
+                      recognitionRef.current.stop();
+                      setTimeout(() => { try { recognitionRef.current.start(); } catch(e){} }, 100);
+                   }
+               }
+            }, 1000); // 1000ms silence threshold (Layer 2)
+          }
+        }
+      }, 100);
+    }).catch(err => console.error("Mic access denied:", err));
+
+    // 2. Setup Speech Recognition
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) return;
     const recognition = new SR();
     recognition.lang = SPEECH_LANG_MAP[languageRef.current] || 'en-IN';
-    recognition.continuous = false;
+    recognition.continuous = true;
     recognition.interimResults = true;
-    recognition.maxAlternatives = 1;
     recognitionRef.current = recognition;
-    setIsListening(true);
-    let finalTranscript = '';
+
     recognition.onresult = (event) => {
       let interim = '';
+      let finalStr = '';
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const t = event.results[i][0].transcript;
-        if (event.results[i].isFinal) finalTranscript += t; else interim += t;
+        if (event.results[i].isFinal) finalStr += t; else interim += t;
       }
-      setInput(finalTranscript + interim);
+      
+      const currentFull = finalStr + interim;
+      if (currentFull.trim()) setInput(currentFull.trim());
     };
+
     recognition.onend = () => {
-      recognitionRef.current = null; setIsListening(false);
-      if (finalTranscript.trim()) { setInput(''); sendMessageRef.current(finalTranscript.trim()); }
+      // Keep it continuous
+      if (micStreamRef.current) {
+         try { recognition.start(); } catch(e) {}
+      }
     };
-    recognition.onerror = () => { recognitionRef.current = null; setIsListening(false); };
+    recognition.onerror = () => {};
     recognition.start();
   }
 
   function toggleListening() {
-    if (recognitionRef.current) { recognitionRef.current.stop(); return; }
-    startListening();
+    if (micStreamRef.current) {
+        const audioTrack = micStreamRef.current.getAudioTracks()[0];
+        if (audioTrack) {
+            audioTrack.enabled = !audioTrack.enabled;
+            if (!audioTrack.enabled) setIsListening(false);
+            else setIsListening(true);
+        }
+    } else {
+       startContinuousListening();
+    }
   }
 
   function handleKeyDown(e) {
@@ -286,7 +460,7 @@ export default function App() {
           <div className="video-window" style={getBackgroundStyle()}>
             <Canvas shadows camera={{ position: [0, 0, 0], fov: 10 }} style={{ width: '100%', height: '100%' }}>
               <Suspense fallback={null}>
-                <Scenario isSpeaking={isSpeaking} isListening={isListening} analyserRef={analyserRef} currentText={currentText} audioRef={audioRef} />
+                <Scenario isSpeaking={isSpeaking} isListening={isListening} analyserRef={analyserRef} currentText={currentText} audioRef={audioRef} pipelineStage={pipelineStage} />
               </Suspense>
             </Canvas>
             <Loader />
@@ -298,33 +472,26 @@ export default function App() {
           </div>
 
           {(isSpeaking || isListening) && (
-            <div className={`status-pill ${isSpeaking ? 'speaking' : 'listening'}`}>
+            <div className={`status-pill ${isSpeaking ? 'speaking' : isListening ? 'listening active' : 'listening'}`}>
               {isSpeaking && <><div className="bars"><span /><span /><span /><span /><span /></div> Speaking</>}
-              {isListening && <><div className="pulse-dot" /> Listening…</>}
+              {isListening && !isSpeaking && <><div className="pulse-dot" /> Listening…</>}
             </div>
           )}
 
           {/* Google Meet-style control bar */}
-          <div className="control-bar">
-            <button className={`auto-btn ${conversationMode ? 'on' : ''}`} onClick={() => { getAudioContext(); setConversationMode(p => !p); }}>
-              {conversationMode ? '🔄 Auto' : '💬 Manual'}
-            </button>
-
+          <div className="control-bar" style={{ justifyContent: 'center' }}>
             <button
-              className={`mic-btn ${isListening ? 'active' : ''} ${isSpeaking ? 'disabled' : ''}`}
+              className={`mic-btn ${isListening ? 'active' : 'muted'}`}
               onClick={() => { getAudioContext(); toggleListening(); }}
-              disabled={isLoading && !isListening}
-              title={isListening ? 'Stop listening' : `Speak to ${avatarName}`}
+              title={isListening ? 'Mute Microphone' : `Unmute Microphone`}
               id="mic-button"
             >
               {isListening ? (
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="6" y="6" width="12" height="12" rx="1" /></svg>
-              ) : (
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /><line x1="12" y1="19" x2="12" y2="22" /></svg>
+              ) : (
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="1" y1="1" x2="23" y2="23" /><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6" /><path d="M17 16.95A7 7 0 0 1 5 12H3a9 9 0 0 0 8 8.94V23h2v-2.06a8.98 8.98 0 0 0 5.39-2.74" /></svg>
               )}
             </button>
-
-            <span className="control-spacer" />
           </div>
         </div>
       </div>

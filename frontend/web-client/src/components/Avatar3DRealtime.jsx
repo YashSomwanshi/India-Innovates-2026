@@ -28,6 +28,7 @@ export function Avatar3DRealtime({
   analyserRef,
   currentText,
   audioRef,
+  pipelineStage,
   ...props
 }) {
   // ── Load model ──
@@ -270,7 +271,10 @@ export function Avatar3DRealtime({
     });
 
     // Listening expression
-    if (isListening && !isSpeaking) {
+    if (pipelineStage === 'thinking') {
+      lerpMorphTarget("browInnerUp", 0.4, 0.1);
+      lerpMorphTarget("mouthSmile", 0.1, 0.1);
+    } else if (isListening && !isSpeaking) {
       lerpMorphTarget("browInnerUp", 0.25, 0.08);
       lerpMorphTarget("eyeWideLeft", 0.15, 0.08);
       lerpMorphTarget("eyeWideRight", 0.15, 0.08);
@@ -397,7 +401,12 @@ export function Avatar3DRealtime({
 
     // ═══ LAYER 12: STATE-BASED GROUP ANIMATION ═══
     if (group.current) {
-      if (!isSpeaking && !isListening) {
+      if (pipelineStage === 'thinking') {
+        // Thinking: look up slightly, gentle sway
+        group.current.rotation.y += (Math.sin(time * 0.3) * 0.05 - group.current.rotation.y) * 0.02;
+        group.current.rotation.x += (-0.03 - group.current.rotation.x) * 0.02;
+        group.current.position.y += (-0.5 - group.current.position.y) * 0.05;
+      } else if (!isSpeaking && !isListening) {
         // Idle: head sway + breathing
         group.current.rotation.y += (Math.sin(time * 0.4) * 0.015 - group.current.rotation.y) * 0.015;
         group.current.rotation.x += (Math.sin(time * 0.25) * 0.008 - group.current.rotation.x) * 0.015;
