@@ -1,14 +1,14 @@
 import { CameraControls, Environment } from "@react-three/drei";
 import { useEffect, useRef } from "react";
-import { Avatar3D } from "./Avatar3D";
+import { Avatar3DRealtime } from "./Avatar3DRealtime";
 
 /**
  * Scenario — Three.js scene wrapper with camera, lighting, and the 3D avatar.
  *
- * Props passed through to Avatar3D:
- *   isSpeaking, isListening, analyserRef
+ * Props passed through to Avatar3DRealtime:
+ *   isSpeaking, isListening, analyserRef, currentText, audioRef
  */
-export function Scenario({ isSpeaking, isListening, analyserRef }) {
+export function Scenario({ isSpeaking, isListening, analyserRef, currentText, audioRef }) {
   const cameraControls = useRef();
 
   useEffect(() => {
@@ -20,10 +20,16 @@ export function Scenario({ isSpeaking, isListening, analyserRef }) {
     <>
       <CameraControls ref={cameraControls} />
       <Environment preset="sunset" />
-      <Avatar3D
+      {/* Ambient fill light for better face visibility */}
+      <ambientLight intensity={0.4} />
+      {/* Key light from front-right */}
+      <directionalLight position={[2, 3, 4]} intensity={0.6} />
+      <Avatar3DRealtime
         isSpeaking={isSpeaking}
         isListening={isListening}
         analyserRef={analyserRef}
+        currentText={currentText}
+        audioRef={audioRef}
       />
     </>
   );

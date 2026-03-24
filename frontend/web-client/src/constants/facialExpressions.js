@@ -77,6 +77,40 @@ const facialExpressions = {
     mouthSmileRight: 0.38,
     tongueOut: 0.96,
   },
+  // ── Emotion-mapped presets ──
+  happy: {
+    mouthSmileLeft: 0.5,
+    mouthSmileRight: 0.5,
+    eyeSquintLeft: 0.3,
+    eyeSquintRight: 0.3,
+    cheekSquintLeft: 0.2,
+    cheekSquintRight: 0.2,
+    browInnerUp: 0.15,
+  },
+  serious: {
+    browDownLeft: 0.4,
+    browDownRight: 0.4,
+    mouthPressLeft: 0.3,
+    mouthPressRight: 0.3,
+    eyeSquintLeft: 0.2,
+    eyeSquintRight: 0.2,
+  },
+  thinking: {
+    browDownLeft: 0.25,
+    browDownRight: 0.15,
+    browInnerUp: 0.3,
+    eyeLookUpLeft: 0.3,
+    eyeLookUpRight: 0.3,
+    mouthPressLeft: 0.2,
+    mouthPressRight: 0.2,
+    eyeSquintLeft: 0.15,
+  },
+  neutral: {},
+  listening: {
+    browInnerUp: 0.25,
+    eyeWideLeft: 0.15,
+    eyeWideRight: 0.15,
+  },
 };
 
 export default facialExpressions;
