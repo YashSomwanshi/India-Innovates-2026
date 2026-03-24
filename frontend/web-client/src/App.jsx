@@ -44,6 +44,7 @@ export default function App() {
   const [pipelineStage, setPipelineStage] = useState(null);
   const [serviceHealth, setServiceHealth] = useState({});
   const [conversationMode, setConversationMode] = useState(false);
+  const [currentText, setCurrentText] = useState('');
 
   const [chatOpen, setChatOpen] = useState(false);
   const [bgPanelOpen, setBgPanelOpen] = useState(false);
@@ -164,7 +165,10 @@ export default function App() {
       };
       setMessages(prev => [...prev, assistantMsg]);
       setPipelineStage(null);
-      if (data.audio_url) playAudio(data.audio_url);
+      if (data.audio_url) {
+        setCurrentText(data.response || '');
+        playAudio(data.audio_url);
+      }
       else if (conversationMode) setTimeout(() => startListening(), 500);
     } catch (err) {
       setMessages(prev => [...prev, {
@@ -185,9 +189,9 @@ export default function App() {
     try { const source = ctx.createMediaElementSource(audio); source.connect(analyser); } catch (e) { console.warn('AudioContext error:', e); }
     audioRef.current = audio;
     setIsSpeaking(true);
-    audio.play().catch(() => { setIsSpeaking(false); if (conversationMode) setTimeout(() => startListening(), 500); });
-    audio.onended = () => { setIsSpeaking(false); if (conversationModeRef.current) setTimeout(() => startListening(), 600); };
-    audio.onerror = () => { setIsSpeaking(false); if (conversationModeRef.current) setTimeout(() => startListening(), 500); };
+    audio.play().catch(() => { setIsSpeaking(false); setCurrentText(''); if (conversationMode) setTimeout(() => startListening(), 500); });
+    audio.onended = () => { setIsSpeaking(false); setCurrentText(''); if (conversationModeRef.current) setTimeout(() => startListening(), 600); };
+    audio.onerror = () => { setIsSpeaking(false); setCurrentText(''); if (conversationModeRef.current) setTimeout(() => startListening(), 500); };
   }
 
   function startListening() {
@@ -282,7 +286,7 @@ export default function App() {
           <div className="video-window" style={getBackgroundStyle()}>
             <Canvas shadows camera={{ position: [0, 0, 0], fov: 10 }} style={{ width: '100%', height: '100%' }}>
               <Suspense fallback={null}>
-                <Scenario isSpeaking={isSpeaking} isListening={isListening} analyserRef={analyserRef} />
+                <Scenario isSpeaking={isSpeaking} isListening={isListening} analyserRef={analyserRef} currentText={currentText} audioRef={audioRef} />
               </Suspense>
             </Canvas>
             <Loader />
@@ -295,8 +299,8 @@ export default function App() {
 
           {(isSpeaking || isListening) && (
             <div className={`status-pill ${isSpeaking ? 'speaking' : 'listening'}`}>
-              {isSpeaking && <><div className="bars"><span/><span/><span/><span/><span/></div> Speaking</>}
-              {isListening && <><div className="pulse-dot"/> Listening…</>}
+              {isSpeaking && <><div className="bars"><span /><span /><span /><span /><span /></div> Speaking</>}
+              {isListening && <><div className="pulse-dot" /> Listening…</>}
             </div>
           )}
 
@@ -314,9 +318,9 @@ export default function App() {
               id="mic-button"
             >
               {isListening ? (
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="6" y="6" width="12" height="12" rx="1" /></svg>
               ) : (
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /><line x1="12" y1="19" x2="12" y2="22" /></svg>
               )}
             </button>
 
@@ -330,52 +334,52 @@ export default function App() {
 
       {/* ── Chat Panel (fixed overlay) ── */}
       <aside className={`chat-panel ${chatOpen ? 'open' : ''}`}>
-          <div className="chat-top">
-            <span className="chat-title">Chat</span>
-            <button className="chat-close" onClick={() => setChatOpen(false)}>✕</button>
-          </div>
+        <div className="chat-top">
+          <span className="chat-title">Chat</span>
+          <button className="chat-close" onClick={() => setChatOpen(false)}>✕</button>
+        </div>
 
-          <div className="chat-msgs">
-            {messages.length === 0 && (
-              <div className="empty">
-                <div className="empty-icon">🇮🇳</div>
-                <h3>Welcome</h3>
-                <p>Ask {avatarName} about government schemes, public services, or programs.</p>
-                <div className="chips">
-                  {QUICK_QUESTIONS.map((q, i) => (
-                    <button key={i} className="chip" onClick={() => { getAudioContext(); sendMessage(q); }}>{q}</button>
-                  ))}
-                </div>
+        <div className="chat-msgs">
+          {messages.length === 0 && (
+            <div className="empty">
+              <div className="empty-icon">🇮🇳</div>
+              <h3>Welcome</h3>
+              <p>Ask {avatarName} about government schemes, public services, or programs.</p>
+              <div className="chips">
+                {QUICK_QUESTIONS.map((q, i) => (
+                  <button key={i} className="chip" onClick={() => { getAudioContext(); sendMessage(q); }}>{q}</button>
+                ))}
               </div>
-            )}
-
-            {messages.map((msg, i) => (
-              <div key={i} className={`msg ${msg.role}`}>
-                {msg.role === 'assistant' && <div className="msg-avatar">{avatarInitial}</div>}
-                <div className="msg-body">
-                  <div className="msg-text">{msg.content}</div>
-                  <div className="msg-time">{msg.time}{msg.pipelineTime && ` · ${(msg.pipelineTime/1000).toFixed(1)}s`}</div>
-                </div>
-              </div>
-            ))}
-
-            {isLoading && (
-              <div className="msg assistant">
-                <div className="msg-avatar">{avatarInitial}</div>
-                <div className="msg-body"><div className="typing"><span/><span/><span/></div></div>
-              </div>
-            )}
-            <div ref={chatEndRef} />
-          </div>
-
-          <div className="chat-input">
-            <div className="input-wrap">
-              <textarea className="input-field" value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
-                placeholder={`Ask ${avatarName} anything…`} rows={1} disabled={isLoading} id="text-input" />
-              <button className="send-btn" onClick={() => { getAudioContext(); sendMessage(input); }} disabled={!input.trim() || isLoading} id="send-button">➤</button>
             </div>
+          )}
+
+          {messages.map((msg, i) => (
+            <div key={i} className={`msg ${msg.role}`}>
+              {msg.role === 'assistant' && <div className="msg-avatar">{avatarInitial}</div>}
+              <div className="msg-body">
+                <div className="msg-text">{msg.content}</div>
+                <div className="msg-time">{msg.time}{msg.pipelineTime && ` · ${(msg.pipelineTime / 1000).toFixed(1)}s`}</div>
+              </div>
+            </div>
+          ))}
+
+          {isLoading && (
+            <div className="msg assistant">
+              <div className="msg-avatar">{avatarInitial}</div>
+              <div className="msg-body"><div className="typing"><span /><span /><span /></div></div>
+            </div>
+          )}
+          <div ref={chatEndRef} />
+        </div>
+
+        <div className="chat-input">
+          <div className="input-wrap">
+            <textarea className="input-field" value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
+              placeholder={`Ask ${avatarName} anything…`} rows={1} disabled={isLoading} id="text-input" />
+            <button className="send-btn" onClick={() => { getAudioContext(); sendMessage(input); }} disabled={!input.trim() || isLoading} id="send-button">➤</button>
           </div>
-        </aside>
+        </div>
+      </aside>
 
       {/* Background Selector */}
       {bgPanelOpen && (
