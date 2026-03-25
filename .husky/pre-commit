@@ -1,0 +1,7 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+if git diff --cached --name-only | grep -q ".env"; then
+  echo "❌ Do not commit .env files"
+  exit 1
+fi

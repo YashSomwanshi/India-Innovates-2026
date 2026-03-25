@@ -7,6 +7,15 @@
     "setup": "scripts/setup.bat",
     "dev": "node scripts/start-all.js"
   },
-  "keywords": ["ai", "avatar", "civic-tech", "multilingual", "governance"],
-  "license": "MIT"
+  "keywords": [
+    "ai",
+    "avatar",
+    "civic-tech",
+    "multilingual",
+    "governance"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^17.3.1"
+  }
 }
