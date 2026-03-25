@@ -16,9 +16,8 @@ An intelligent platform that helps Indian citizens understand government schemes
 
 - 🗣️ **Multilingual Voice Conversations** — Speak in English, Hindi, Marathi, Tamil, Telugu, or Bengali; the avatar responds in the same language
 - 🧠 **Local AI Intelligence** — Powered by Meta Llama 3 via Ollama — no API keys, no cloud, no data leaks
-- 🎭 **Multiple Avatar Personas** — Choose from 4 pre-built avatars, create your own, or load dynamic Avaturn GLB models
-- 🎨 **High-Fidelity 3D Avatars** — GPU-accelerated React Three Fiber rendering with Avaturn API integration
-- 👄 **Advanced Animation** — Viseme-based precise lip-sync, emotion-based expressions, and natural head orientation
+- 🎭 **Multiple Avatar Personas** — Choose from 4 pre-built government avatars or create your own with custom personalities
+- 🎨 **Real-time 3D Avatar** — GPU-accelerated WebGL avatar with live lip-sync driven by audio analysis
 - 🎤 **Full Speech Pipeline** — Voice Input → STT → Translation → LLM → Translation → TTS → Lip-Sync Animation
 - 🖼️ **Virtual Backgrounds** — Google Meet-style backgrounds with custom upload support
 - ⚡ **One-Command Setup** — Automated installer handles Node.js, Python, Ollama, and all dependencies
@@ -93,7 +92,7 @@ An intelligent platform that helps Indian citizens understand government schemes
     ↓
 🔊 Text-to-Speech (Edge-TTS) → Audio
     ↓
-👤 3D Avatar Animation (Viseme Lip-Sync & Emotion Expressions)
+👤 3D Avatar Lip-Sync Animation (Web Audio API)
 ```
 
 ---
@@ -171,14 +170,14 @@ Open **http://localhost:5173** in your browser.
 | Layer | Technology | Purpose |
 |-------|-----------|---------|
 | **Frontend** | React 18 + Vite 6 | Component-based UI with fast HMR dev server |
-| **3D Rendering** | React Three Fiber + Avaturn | GPU-accelerated 3D avatars with dynamic GLB model loading |
+| **3D Rendering** | Three.js + React Three Fiber + drei | GPU-accelerated 3D avatar with declarative React bindings |
 | **Backend** | Node.js + Express 4 | REST API gateway and pipeline orchestration |
 | **Real-time** | WebSocket (ws) | Live pipeline stage updates during response generation |
 | **Speech-to-Text** | faster-whisper (Python) | CTranslate2-optimized Whisper for fast, accurate transcription |
 | **LLM** | Ollama + Meta Llama 3 | Fully local LLM inference — zero cloud dependency |
 | **Translation** | Ollama/Llama3 | LLM-powered multilingual translation (single model handles all languages) |
 | **Text-to-Speech** | edge-tts + pyttsx3 | Neural TTS with offline fallback |
-| **Animation** | Visemes & Morph Targets | Real-time viseme lip-sync and emotion-based expressions |
+| **Lip-Sync** | Web Audio API | Real-time audio frequency analysis driving avatar mouth animation |
 | **Voice Input** | Web Speech API | Browser-native speech recognition |
 | **File Upload** | Multer | Handles audio file uploads for the STT pipeline |
 | **Dev Tooling** | Leva | Real-time 3D scene parameter tuning |

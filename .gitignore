@@ -10,7 +10,6 @@ build/
 # Environment
 .env
 .env.local
-.env.*
 
 # TTS generated audio
 services/tts-service/output/

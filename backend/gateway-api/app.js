@@ -13,15 +13,6 @@ const { WebSocketServer } = require('ws');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-require('dotenv').config(); // Ensure dotenv is loaded so process.env is populated
-
-// LAYER 7: RUNTIME SAFETY CHECK
-const requiredEnvs = ['GATEWAY_PORT', 'OLLAMA_URL'];
-requiredEnvs.forEach(key => {
-  if (!process.env[key]) {
-    throw new Error(`CRITICAL: Missing ${key} in environment variables. Do not commit secrets.`);
-  }
-});
 
 const app = express();
 const server = http.createServer(app);
