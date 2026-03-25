@@ -23,6 +23,7 @@ const VISEME_TARGETS = new Set([
  * Performance: morphTargetDictionary is cached once, not traversed every frame.
  */
 export function Avatar3DRealtime({
+  avatarUrl,
   isSpeaking,
   isListening,
   analyserRef,
@@ -31,10 +32,37 @@ export function Avatar3DRealtime({
   pipelineStage,
   ...props
 }) {
-  // ── Load model ──
-  const gltfAvatar = useGLTF("/avatars/avatar.glb");
+  // ── Load model (dynamic URL with fallback) ──
+  const modelUrl = avatarUrl || '/avatars/avatar.glb';
+  const gltfAvatar = useGLTF(modelUrl);
   const scene = gltfAvatar.scene;
   const animations = gltfAvatar.animations || [];
+
+  // ═══ LAYER 1: NORMALIZE MODEL ORIENTATION ═══
+  // Different GLB models may have different root rotations.
+  // Force the scene to upright orientation on load.
+  useEffect(() => {
+    if (!scene) return;
+    // Reset root transform to ensure consistent orientation
+    scene.rotation.set(0, 0, 0);
+    scene.position.set(0, 0, 0);
+    scene.scale.set(1, 1, 1);
+    console.log(`[Avatar3D] Model loaded: ${modelUrl}`);
+
+    // Layer 8: Debug — log all bones and their rest rotations
+    const boneList = [];
+    scene.traverse((child) => {
+      if (child.isBone) {
+        boneList.push({
+          name: child.name,
+          rx: child.rotation.x.toFixed(3),
+          ry: child.rotation.y.toFixed(3),
+          rz: child.rotation.z.toFixed(3),
+        });
+      }
+    });
+    console.log(`[Avatar3D] Bones (${boneList.length}):`, boneList.map(b => `${b.name}(${b.rx},${b.ry},${b.rz})`).join(', '));
+  }, [scene, modelUrl]);
 
   const group = useRef();
   const { actions, mixer } = useAnimations(animations, group);
@@ -135,19 +163,29 @@ export function Avatar3DRealtime({
     }
   }, [analyserRef?.current]);
 
-  // Play first animation
+  // Set active animation based on speaking state
   useEffect(() => {
-    if (animations.length > 0) setAnimation(animations[0].name);
-  }, [animations]);
+    const isMale = modelUrl?.includes("male");
+    const isFemale = modelUrl?.includes("female");
+    
+    if (isMale && actions["still"] && actions["handwaving"]) {
+      setAnimation(isSpeaking ? "handwaving" : "still");
+    } else if (isFemale && actions["still_f"] && actions["handwaving_f"]) {
+      setAnimation(isSpeaking ? "handwaving_f" : "still_f");
+    } else {
+      if (animations.length > 0) setAnimation(animations[0].name);
+    }
+  }, [isSpeaking, modelUrl, actions, animations]);
 
+  // Handle cross-fading base animations
   useEffect(() => {
     if (!animation || Object.keys(actions).length === 0) return;
     const action = actions[animation] || Object.values(actions)[0];
     if (action) {
-      action.reset().fadeIn(mixer.stats.actions.inUse === 0 ? 0 : 0.5).play();
-      return () => action.fadeOut(0.5);
+      action.reset().fadeIn(0.3).play();
+      return () => action.fadeOut(0.3);
     }
-  }, [animation, actions, mixer]);
+  }, [animation, actions]);
 
   // ── Discover bones ──
   const jawBone = useMemo(() => {
@@ -196,14 +234,21 @@ export function Avatar3DRealtime({
     scene.traverse((child) => {
       if (!child.isBone) return;
       const n = child.name.toLowerCase();
+      // Upper arms
       if (n.includes("leftupperarm") || n.includes("left_upper_arm") || n.includes("upperarm_l") || (n.includes("upper") && n.includes("arm") && n.includes("left")))
         result.leftUpperArm = child;
       if (n.includes("rightupperarm") || n.includes("right_upper_arm") || n.includes("upperarm_r") || (n.includes("upper") && n.includes("arm") && n.includes("right")))
         result.rightUpperArm = child;
+      // Shoulders
       if (n.includes("leftshoulder") || n.includes("left_shoulder") || n.includes("shoulder_l"))
         result.leftShoulder = child;
       if (n.includes("rightshoulder") || n.includes("right_shoulder") || n.includes("shoulder_r"))
         result.rightShoulder = child;
+      // Forearms (Layer 2)
+      if (n.includes("leftforearm") || n.includes("left_forearm") || n.includes("forearm_l") || (n.includes("forearm") && n.includes("left")))
+        result.leftForeArm = child;
+      if (n.includes("rightforearm") || n.includes("right_forearm") || n.includes("forearm_r") || (n.includes("forearm") && n.includes("right")))
+        result.rightForeArm = child;
     });
     if (Object.keys(result).length > 0) {
       console.log("[Avatar3D] Arm bones:", Object.keys(result));
@@ -212,7 +257,15 @@ export function Avatar3DRealtime({
   }, [scene]);
 
   // Store initial bone transforms
+  // LAYER 2: Store per-model, so we capture the actual rest pose of THIS specific GLB.
   const initialBoneRots = useRef({});
+  const boneInitLogged = useRef(false);
+  useEffect(() => {
+    // Clear on model change so we re-capture for the new GLB
+    initialBoneRots.current = {};
+    boneInitLogged.current = false;
+  }, [modelUrl]);
+
   useEffect(() => {
     const allBones = { jawBone, headBone, neckBone, ...armBones };
     spineBones.forEach((b, i) => { allBones[`spine${i}`] = b; });
@@ -224,9 +277,70 @@ export function Avatar3DRealtime({
         };
       }
     });
-  }, [jawBone, headBone, neckBone, spineBones, armBones]);
+    // Debug log initial rotations once per model load
+    if (!boneInitLogged.current && Object.keys(initialBoneRots.current).length > 0) {
+      boneInitLogged.current = true;
+      const summary = Object.entries(initialBoneRots.current).map(([k, v]) =>
+        `${k}(${v.rotation.x.toFixed(2)},${v.rotation.y.toFixed(2)},${v.rotation.z.toFixed(2)})`
+      ).join(', ');
+      console.log(`[Avatar3D] Initial bone rotations for ${modelUrl}:`, summary);
+    }
+  }, [jawBone, headBone, neckBone, spineBones, armBones, modelUrl]);
 
-  // ═══ LAYER 7: PERFORMANCE — fast morph target update (no scene.traverse) ═══
+  // ═══ ADDITIVE TARGET-BASED GESTURE SYSTEM ═══
+  // Layer 2: Persistent target offsets (what we WANT) and current offsets (what we HAVE)
+  // These are additive Euler offsets applied ON TOP OF whatever the base animation gives us.
+  // STRICT RULE: NO head, neck, or jaw bones here — face is lip-sync ONLY.
+  const targetOffsets = useRef({
+    leftUpperArm:   [0, 0, 0],
+    rightUpperArm:  [0, 0, 0],
+    leftForeArm:    [0, 0, 0],
+    rightForeArm:   [0, 0, 0],
+    leftShoulder:   [0, 0, 0],
+    rightShoulder:  [0, 0, 0],
+  });
+  const currentOffsets = useRef({
+    leftUpperArm:   [0, 0, 0],
+    rightUpperArm:  [0, 0, 0],
+    leftForeArm:    [0, 0, 0],
+    rightForeArm:   [0, 0, 0],
+    leftShoulder:   [0, 0, 0],
+    rightShoulder:  [0, 0, 0],
+  });
+  // Spine offsets (separate because variable count)
+  const spineTargetOffsets = useRef([]);
+  const spineCurrentOffsets = useRef([]);
+
+  // Initialize spine offset arrays when bones change
+  useEffect(() => {
+    if (spineBones.length > 0 && spineTargetOffsets.current.length !== spineBones.length) {
+      spineTargetOffsets.current = spineBones.map(() => [0, 0, 0]);
+      spineCurrentOffsets.current = spineBones.map(() => [0, 0, 0]);
+    }
+  }, [spineBones]);
+
+  // ─── STATE-BASED GESTURE MACHINE ───
+  // States: 'idle' | 'raising' | 'hold' | 'returning' | 'cooldown'
+  const gestureRef = useRef({
+    state: 'idle',
+    stateStartTime: 0,
+    holdDuration: 0,      // how long to hold (0.8-1.2s)
+    cooldownEnd: 0,       // when cooldown expires (allows re-trigger)
+    gestureCount: 0,      // how many gestures fired this speech session
+    wasSpeaking: false,   // edge detection for speech start
+  });
+
+  // Speech-aware response intensity heuristic (Layer 7)
+  const gestureIntensityRef = useRef(1.0);
+  useEffect(() => {
+    if (!currentText) { gestureIntensityRef.current = 0.3; return; }
+    const len = currentText.trim().length;
+    if (len < 80) gestureIntensityRef.current = 0.5;
+    else if (len < 200) gestureIntensityRef.current = 0.8;
+    else gestureIntensityRef.current = 1.0;
+  }, [currentText]);
+
+  // ═══ PERFORMANCE — fast morph target update (no scene.traverse) ═══
   const lerpMorphTarget = (target, value, speed = 0.1) => {
     const meshes = morphMeshesRef.current;
     for (let m = 0; m < meshes.length; m++) {
@@ -238,19 +352,35 @@ export function Avatar3DRealtime({
     }
   };
 
-  // Reusable quaternion objects (avoid GC pressure)
-  const _targetQuat = useMemo(() => new THREE.Quaternion(), []);
-  const _speechQuat = useMemo(() => new THREE.Quaternion(), []);
-  const _euler = useMemo(() => new THREE.Euler(), []);
+  // Pre-allocated quaternion + euler (zero GC, Layer 9)
+  const _addQuat = useMemo(() => new THREE.Quaternion(), []);
+  const _addEuler = useMemo(() => new THREE.Euler(), []);
 
-  // Helper: apply procedural bone rotation
-  const applyBoneOffset = (boneName, bone, euler, slerpSpeed) => {
-    const init = initialBoneRots.current[boneName]?.quaternion;
-    if (!init) return;
-    _targetQuat.copy(init);
-    _speechQuat.setFromEuler(_euler.set(euler[0], euler[1], euler[2]));
-    _targetQuat.multiply(_speechQuat);
-    bone.quaternion.slerp(_targetQuat, slerpSpeed);
+  // Layer 3 & 6: Apply additive offset AFTER base animation has written the bone
+  // LAYER 1: Forward-only clamp — prevents backward arm motion
+  const applyAdditiveOffset = (bone, current, clampConfig) => {
+    if (!bone) return;
+    // Default: forward-only on X (0 to +max), symmetric on Y, forward on Z
+    const cfg = clampConfig || { xMin: 0, xMax: 0.3, yMax: 0.15, zMin: 0, zMax: 0.2 };
+    const cx = THREE.MathUtils.clamp(current[0], cfg.xMin, cfg.xMax);
+    const cy = THREE.MathUtils.clamp(current[1], -cfg.yMax, cfg.yMax);
+    const cz = THREE.MathUtils.clamp(current[2], cfg.zMin, cfg.zMax);
+    // Build a quaternion from the clamped euler offset
+    _addQuat.setFromEuler(_addEuler.set(cx, cy, cz));
+    // Multiply onto whatever the animation clip set this frame
+    bone.quaternion.multiply(_addQuat);
+  };
+
+  // Per-bone clamp configs (Layer 1 + 3)
+  const CLAMP_ARM      = { xMin: 0, xMax: 0.35, yMax: 0.12, zMin: 0, zMax: 0.1 };
+  const CLAMP_FOREARM  = { xMin: 0, xMax: 0.1,  yMax: 0.05, zMin: 0, zMax: 0.25 };
+  const CLAMP_SHOULDER = { xMin: 0, xMax: 0.05, yMax: 0.05, zMin: 0, zMax: 0.08 };
+
+  // Layer 3: Lerp a current offset array toward a target offset array
+  const lerpOffset = (current, target, speed) => {
+    current[0] += (target[0] - current[0]) * speed;
+    current[1] += (target[1] - current[1]) * speed;
+    current[2] += (target[2] - current[2]) * speed;
   };
 
   // ─── Per-frame update ───
@@ -259,8 +389,12 @@ export function Avatar3DRealtime({
     const time = state.clock.elapsedTime;
     const phonemes = phonemesRef.current;
     const totalDuration = audioDurationRef.current;
+    const tgt = targetOffsets.current;
+    const cur = currentOffsets.current;
+    const LERP_SPEED = 0.08;  // smooth convergence
+    const DECAY = 0.985;      // Layer 5: slow decay — holds gesture longer before fading
 
-    // ═══ LAYER 11: EXPRESSION BLENDING (face only, never touch visemes) ═══
+    // ═══ EXPRESSION BLENDING (face only, never touch visemes) ═══
     const expressionKey = emotionToExpression[emotion] || "default";
     const expressionMap = facialExpressions[expressionKey] || {};
 
@@ -280,34 +414,30 @@ export function Avatar3DRealtime({
       lerpMorphTarget("eyeWideRight", 0.15, 0.08);
     }
 
-    // ═══ LAYER 10: BLINKING ═══
+    // ═══ BLINKING ═══
     lerpMorphTarget("eyeBlinkLeft", blink ? 1 : 0, 0.5);
     lerpMorphTarget("eyeBlinkRight", blink ? 1 : 0, 0.5);
 
-    // ═══ LAYERS 1-6: AUDIO-DRIVEN MULTILINGUAL LIP SYNC ═══
+    // ═══ AUDIO-DRIVEN MULTILINGUAL LIP SYNC (untouched) ═══
     if (isSpeaking) {
       const audio = audioRef?.current;
       const currentTime = audio ? audio.currentTime || 0 : 0;
       const effectiveDuration = totalDuration > 0 ? totalDuration : (audio?.duration || 1);
       const phonemeCount = phonemes.length;
 
-      // ── LAYER 4: Audio-driven index ──
       let currentViseme = "viseme_sil";
       if (phonemeCount > 0 && effectiveDuration > 0) {
         const currentIndex = Math.floor(
           (currentTime / effectiveDuration) * phonemeCount
         );
 
-        // ── LAYER 5: Prevent lip sync stop ──
         if (currentIndex >= 0 && currentIndex < phonemeCount) {
           const phoneme = phonemes[currentIndex]?.phoneme;
           if (phoneme && phoneme !== "SIL") {
-            currentViseme = visemesMapping[phoneme] || "viseme_aa"; // fallback to open mouth
+            currentViseme = visemesMapping[phoneme] || "viseme_aa";
           }
         }
-        // index >= count or < 0 → viseme_sil (natural end)
 
-        // ── LAYER 13: Debug logging (once per session) ──
         if (!syncLoggedRef.current) {
           syncLoggedRef.current = true;
           console.log(
@@ -318,26 +448,25 @@ export function Avatar3DRealtime({
         }
       }
 
-      // ── LAYER 6: Smooth viseme transitions ──
+      const isMale = modelUrl?.includes("male");
+      const lipSyncScale = isMale ? 0.6 : 1.0;
+
       for (const key of VISEME_TARGETS) {
         if (key === currentViseme) {
-          lerpMorphTarget(key, 0.9, 0.2);
+          lerpMorphTarget(key, 0.9 * lipSyncScale, 0.2);
         } else if (key === "jawOpen") {
           // Separate jaw treatment below
         } else if (key === "mouthOpen") {
-          lerpMorphTarget(key, currentViseme !== "viseme_sil" ? 0.35 : 0, 0.2);
+          lerpMorphTarget(key, currentViseme !== "viseme_sil" ? 0.35 * lipSyncScale : 0, 0.2);
         } else {
-          // Gradual decay — NOT instant zero
           lerpMorphTarget(key, 0, 0.15);
         }
       }
 
-      // ── LAYER 3: Base jaw oscillation (prevents dead face in any language) ──
-      const baseJaw = 0.2 + Math.sin(time * 8) * 0.1;
-      const visemeJaw = currentViseme !== "viseme_sil" ? 0.5 : 0.1;
+      const baseJaw = 0.2 * lipSyncScale + Math.sin(time * 8) * 0.1 * lipSyncScale;
+      const visemeJaw = currentViseme !== "viseme_sil" ? 0.5 * lipSyncScale : 0.1 * lipSyncScale;
       lerpMorphTarget("jawOpen", Math.max(baseJaw, visemeJaw), 0.2);
 
-      // Jaw bone rotation from audio analyser
       if (jawBone && initialBoneRots.current.jawBone) {
         let jawAmount = baseJaw * 0.3;
         if (analyserRef?.current && dataArrayRef.current) {
@@ -345,50 +474,141 @@ export function Avatar3DRealtime({
           const d = dataArrayRef.current;
           const lo = (d[1] + d[2] + d[3] + d[4] + d[5]) / 5;
           const mid = (d[6] + d[7] + d[8] + d[9] + d[10] + d[11] + d[12] + d[13]) / 8;
-          jawAmount = Math.min((lo * 0.8 + mid * 0.8) / 100, 1.0) * 0.25;
+          jawAmount = Math.min((lo * 0.8 + mid * 0.8) / 100, 1.0) * 0.25 * lipSyncScale;
         }
         const initX = initialBoneRots.current.jawBone.rotation.x;
         jawBone.rotation.x += ((initX + jawAmount) - jawBone.rotation.x) * 0.3;
       }
 
-      // ═══ LAYER 8: HEAD MOVEMENT during speaking ═══
-      if (headBone) {
-        applyBoneOffset("headBone", headBone, [
-          Math.sin(time * 2.0) * 0.02,
-          Math.sin(time * 1.5) * 0.05,
-          Math.sin(time * 0.8) * 0.015,
-        ], 0.08);
+      // Ensure Head and Neck are locked looking forward during speech
+      if (headBone && initialBoneRots.current.headBone) {
+        headBone.rotation.x += (initialBoneRots.current.headBone.rotation.x - headBone.rotation.x) * 0.1;
+        headBone.rotation.y += (initialBoneRots.current.headBone.rotation.y - headBone.rotation.y) * 0.1;
+        headBone.rotation.z += (initialBoneRots.current.headBone.rotation.z - headBone.rotation.z) * 0.1;
+      }
+      if (neckBone && initialBoneRots.current.neckBone) {
+        neckBone.rotation.x += (initialBoneRots.current.neckBone.rotation.x - neckBone.rotation.x) * 0.1;
+        neckBone.rotation.y += (initialBoneRots.current.neckBone.rotation.y - neckBone.rotation.y) * 0.1;
+        neckBone.rotation.z += (initialBoneRots.current.neckBone.rotation.z - neckBone.rotation.z) * 0.1;
       }
 
-      // ═══ LAYER 9: ARM / SHOULDER / SPINE GESTURE ═══
-      if (armBones.leftUpperArm) {
-        applyBoneOffset("leftUpperArm", armBones.leftUpperArm, [
-          Math.sin(time * 1.2) * 0.04, 0, Math.sin(time * 0.9) * 0.03,
-        ], 0.05);
+      // ═══ STATE-BASED GESTURE MACHINE ═══
+      // Only run procedural gestures for female (male uses baked 'handwaving' now)
+      if (!isMale) {
+      const g = gestureRef.current;
+      const amp = gestureIntensityRef.current;
+
+      // LAYER 3: Detect speech START edge (trigger gesture once)
+      if (!g.wasSpeaking) {
+        // Speech just started — trigger first gesture
+        g.wasSpeaking = true;
+        g.gestureCount = 0;
+        g.state = 'raising';
+        g.stateStartTime = time;
+        g.holdDuration = 0.8 + Math.random() * 0.4; // 0.8-1.2s hold
+
+        // Pick a random gesture (set targets once, not every frame)
+        const gestType = Math.floor(Math.random() * 4) + 1;
+        const i = (0.4 + Math.random() * 0.3) * amp;
+
+        if (gestType === 1) {       // right arm forward explain
+          tgt.rightUpperArm = [ i * 0.30,  0,           0];
+          tgt.rightForeArm  = [ 0,          0,          i * 0.20];
+          tgt.leftUpperArm  = [ i * 0.05,  0,           0];
+          tgt.leftForeArm   = [ 0,          0,          i * 0.03];
+        } else if (gestType === 2) { // left arm forward explain
+          tgt.leftUpperArm  = [ i * 0.25,  i * 0.06,    0];
+          tgt.leftForeArm   = [ 0,          0,          i * 0.18];
+          tgt.rightUpperArm = [ i * 0.04,  0,            0];
+          tgt.rightForeArm  = [ 0,          0,          i * 0.02];
+        } else if (gestType === 3) { // both arms open (asymmetric)
+          tgt.leftUpperArm  = [ i * 0.22,  i * 0.06,    0];
+          tgt.rightUpperArm = [ i * 0.15,  0,            0];
+          tgt.leftForeArm   = [ 0,          0,           i * 0.14];
+          tgt.rightForeArm  = [ 0,          0,           i * 0.09];
+        } else {                     // right arm outward explain
+          tgt.rightUpperArm = [ i * 0.20,  i * 0.08,    0];
+          tgt.rightForeArm  = [ 0,          0,          i * 0.15];
+          tgt.leftUpperArm  = [ i * 0.03,  0,            0];
+          tgt.leftForeArm   = [ 0,          0,          i * 0.02];
+        }
+        tgt.leftShoulder  = [0, 0, tgt.leftUpperArm[1]  * 0.1];
+        tgt.rightShoulder = [0, 0, tgt.rightUpperArm[1] * 0.1];
+        g.gestureCount++;
       }
-      if (armBones.rightUpperArm) {
-        applyBoneOffset("rightUpperArm", armBones.rightUpperArm, [
-          Math.sin(time * 1.3 + 1) * 0.04, 0, -Math.sin(time * 1.0 + 0.5) * 0.03,
-        ], 0.05);
+
+      // LAYER 4: State machine transitions (no looping, no Math.sin)
+      const elapsed = time - g.stateStartTime;
+
+      if (g.state === 'raising') {
+        // Targets already set — lerp (in LERP section below) moves current toward target.
+        // Transition to HOLD after current ~reaches target (~0.5s)
+        if (elapsed > 0.5) {
+          g.state = 'hold';
+          g.stateStartTime = time;
+        }
+      } else if (g.state === 'hold') {
+        // LAYER 4 step 2: Hold position for holdDuration (targets unchanged)
+        if (elapsed > g.holdDuration) {
+          g.state = 'returning';
+          g.stateStartTime = time;
+          // Zero all targets — lerp will smoothly bring current back to 0
+          for (const key in tgt) {
+            tgt[key][0] = 0;
+            tgt[key][1] = 0;
+            tgt[key][2] = 0;
+          }
+        }
+      } else if (g.state === 'returning') {
+        // Lerp moves current toward zero. Once done, enter cooldown.
+        if (elapsed > 0.6) {
+          g.state = 'cooldown';
+          g.stateStartTime = time;
+          g.cooldownEnd = time + 2.0 + Math.random() * 2.0; // 2-4s cooldown
+        }
+      } else if (g.state === 'cooldown') {
+        // LAYER 8: Allow ONE more gesture after cooldown (for long speech)
+        if (time > g.cooldownEnd && g.gestureCount < 3) {
+          g.state = 'raising';
+          g.stateStartTime = time;
+          g.holdDuration = 0.8 + Math.random() * 0.4;
+
+          // Pick a NEW gesture for the re-trigger
+          const gestType = Math.floor(Math.random() * 4) + 1;
+          const i = (0.4 + Math.random() * 0.3) * amp;
+
+          if (gestType === 1) {
+            tgt.rightUpperArm = [ i * 0.30,  0,           0];
+            tgt.rightForeArm  = [ 0,          0,          i * 0.20];
+            tgt.leftUpperArm  = [ i * 0.05,  0,           0];
+            tgt.leftForeArm   = [ 0,          0,          i * 0.03];
+          } else if (gestType === 2) {
+            tgt.leftUpperArm  = [ i * 0.25,  i * 0.06,    0];
+            tgt.leftForeArm   = [ 0,          0,          i * 0.18];
+            tgt.rightUpperArm = [ i * 0.04,  0,            0];
+            tgt.rightForeArm  = [ 0,          0,          i * 0.02];
+          } else if (gestType === 3) {
+            tgt.leftUpperArm  = [ i * 0.22,  i * 0.06,    0];
+            tgt.rightUpperArm = [ i * 0.15,  0,            0];
+            tgt.leftForeArm   = [ 0,          0,           i * 0.14];
+            tgt.rightForeArm  = [ 0,          0,           i * 0.09];
+          } else {
+            tgt.rightUpperArm = [ i * 0.20,  i * 0.08,    0];
+            tgt.rightForeArm  = [ 0,          0,          i * 0.15];
+            tgt.leftUpperArm  = [ i * 0.03,  0,            0];
+            tgt.leftForeArm   = [ 0,          0,          i * 0.02];
+          }
+          tgt.leftShoulder  = [0, 0, tgt.leftUpperArm[1]  * 0.1];
+          tgt.rightShoulder = [0, 0, tgt.rightUpperArm[1] * 0.1];
+          g.gestureCount++;
+        }
       }
-      if (armBones.leftShoulder) {
-        applyBoneOffset("leftShoulder", armBones.leftShoulder, [
-          0, 0, Math.sin(time * 0.7) * 0.02,
-        ], 0.04);
       }
-      if (armBones.rightShoulder) {
-        applyBoneOffset("rightShoulder", armBones.rightShoulder, [
-          0, 0, -Math.sin(time * 0.7 + 0.5) * 0.02,
-        ], 0.04);
-      }
-      spineBones.forEach((bone, i) => {
-        applyBoneOffset(`spine${i}`, bone, [
-          0, Math.sin(time * 0.6 + i * 0.3) * 0.01, 0,
-        ], 0.04);
-      });
+      // END procedural female gestures
+      // In 'idle' state inside speaking block: do nothing (wait for state change)
 
     } else {
-      // ═══ NOT SPEAKING — gradual return to rest ═══
+      // ═══ NOT SPEAKING — LAYER 7: Force return to rest ═══
       for (const key of VISEME_TARGETS) {
         lerpMorphTarget(key, 0, 0.12);
       }
@@ -396,8 +616,61 @@ export function Avatar3DRealtime({
         const initX = initialBoneRots.current.jawBone.rotation.x;
         jawBone.rotation.x += (initX - jawBone.rotation.x) * 0.15;
       }
+      // Reset gesture state machine
+      const g = gestureRef.current;
+      if (g.wasSpeaking) {
+        g.wasSpeaking = false;
+        g.state = 'idle';
+        g.gestureCount = 0;
+      }
+      // Zero all targets — lerp brings arms back to rest
+      for (const key in tgt) {
+        tgt[key][0] = 0;
+        tgt[key][1] = 0;
+        tgt[key][2] = 0;
+      }
       syncLoggedRef.current = false;
+      
+      // Let head slowly return to idle animation naturally when not speaking
     }
+
+    // NO head/neck micro-movement — face is strictly lip-sync only (Layer 1)
+
+    // ═══ SPINE: SAFE NON-ACCUMULATING SYSTEM ═══
+    // Spine uses direct-set from initial rotation + tiny offset (NO multiply, NO +=)
+    // This prevents the accumulation bug that causes infinite twisting.
+    const SPINE_MAX = 0.03; // radians (~1.7 degrees) — extremely subtle
+    for (let si = 0; si < spineBones.length; si++) {
+      const bone = spineBones[si];
+      const init = initialBoneRots.current[`spine${si}`];
+      if (!bone || !init) continue;
+
+      // Compute tiny breathing offset (clamped)
+      const offX = THREE.MathUtils.clamp(Math.sin(time * 0.25 + si * 0.5) * 0.005, -SPINE_MAX, SPINE_MAX);
+      const offY = THREE.MathUtils.clamp(Math.sin(time * 0.38 + si * 0.3) * 0.003, -SPINE_MAX, SPINE_MAX);
+
+      // LAYER 4: Lerp toward (initialRotation + offset) — absolute set, never accumulate
+      bone.rotation.x += ((init.rotation.x + offX) - bone.rotation.x) * 0.05;
+      bone.rotation.y += ((init.rotation.y + offY) - bone.rotation.y) * 0.05;
+      bone.rotation.z += ((init.rotation.z)        - bone.rotation.z) * 0.05;
+    }
+
+    // ═══ LERP arm/shoulder current offsets toward targets ═══
+    for (const key in cur) {
+      lerpOffset(cur[key], tgt[key], LERP_SPEED);
+    }
+
+    // ═══ APPLY ADDITIVE OFFSETS — ARMS AND SHOULDERS ONLY ═══
+    // Procedural arm offsets only applied to female (male uses baked clips)
+    if (!modelUrl?.includes("male")) {
+      applyAdditiveOffset(armBones.leftUpperArm,  cur.leftUpperArm,  CLAMP_ARM);
+      applyAdditiveOffset(armBones.rightUpperArm, cur.rightUpperArm, CLAMP_ARM);
+      applyAdditiveOffset(armBones.leftForeArm,   cur.leftForeArm,   CLAMP_FOREARM);
+      applyAdditiveOffset(armBones.rightForeArm,  cur.rightForeArm,  CLAMP_FOREARM);
+      applyAdditiveOffset(armBones.leftShoulder,  cur.leftShoulder,  CLAMP_SHOULDER);
+      applyAdditiveOffset(armBones.rightShoulder, cur.rightShoulder, CLAMP_SHOULDER);
+    }
+    // Spine handled above with direct-set. Hands/fingers NOT animated (follow naturally).
 
     // ═══ LAYER 12: STATE-BASED GROUP ANIMATION ═══
     if (group.current) {
@@ -445,4 +718,7 @@ export function Avatar3DRealtime({
   );
 }
 
-useGLTF.preload("/avatars/avatar.glb");
+// Preload both avatar models for fast switching (Layer 9)
+useGLTF.preload('/avatars/male.glb');
+useGLTF.preload('/avatars/female.glb');
+useGLTF.preload('/avatars/avatar.glb');

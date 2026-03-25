@@ -8,7 +8,7 @@ import { Avatar3DRealtime } from "./Avatar3DRealtime";
  * Props passed through to Avatar3DRealtime:
  *   isSpeaking, isListening, analyserRef, currentText, audioRef
  */
-export function Scenario({ isSpeaking, isListening, analyserRef, currentText, audioRef, pipelineStage }) {
+export function Scenario({ avatarUrl, isSpeaking, isListening, analyserRef, currentText, audioRef, pipelineStage }) {
   const cameraControls = useRef();
 
   useEffect(() => {
@@ -25,6 +25,8 @@ export function Scenario({ isSpeaking, isListening, analyserRef, currentText, au
       {/* Key light from front-right */}
       <directionalLight position={[2, 3, 4]} intensity={0.6} />
       <Avatar3DRealtime
+        key={avatarUrl}
+        avatarUrl={avatarUrl}
         isSpeaking={isSpeaking}
         isListening={isListening}
         analyserRef={analyserRef}

@@ -5,6 +5,7 @@ import { Leva } from 'leva';
 import { Scenario } from './components/Scenario';
 import LanguageSelector from './components/LanguageSelector';
 import AvatarSelection from './components/AvatarSelection';
+import { getAvatarUrl } from './avatarData';
 
 const GATEWAY_URL = '';
 
@@ -425,6 +426,11 @@ export default function App() {
   const avatarName = activeAvatar?.name || 'Ajay';
   const avatarTitle = activeAvatar?.title || 'AI Civic Assistant';
   const avatarInitial = avatarName.charAt(0);
+  const avatarUrl = getAvatarUrl(activeAvatar);
+
+  // Layer 10: Debug Logging
+  console.log('Selected Gender:', activeAvatar?.avatarGender || 'default');
+  console.log('Avatar URL:', avatarUrl);
 
   // ═══ SELECTION SCREEN ═══
   if (screen === 'select') {
@@ -460,7 +466,7 @@ export default function App() {
           <div className="video-window" style={getBackgroundStyle()}>
             <Canvas shadows camera={{ position: [0, 0, 0], fov: 10 }} style={{ width: '100%', height: '100%' }}>
               <Suspense fallback={null}>
-                <Scenario isSpeaking={isSpeaking} isListening={isListening} analyserRef={analyserRef} currentText={currentText} audioRef={audioRef} pipelineStage={pipelineStage} />
+                <Scenario key={avatarUrl} avatarUrl={avatarUrl} isSpeaking={isSpeaking} isListening={isListening} analyserRef={analyserRef} currentText={currentText} audioRef={audioRef} pipelineStage={pipelineStage} />
               </Suspense>
             </Canvas>
             <Loader />
