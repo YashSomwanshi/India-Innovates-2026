@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react';
+import { AVATAR_MAP } from '../avatarData';
 
 /**
  * AvatarCreator — Modal for creating a new avatar.
@@ -10,10 +11,16 @@ export default function AvatarCreator({ onSave, onClose }) {
   const [name, setName] = useState('');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  const [avatarGender, setAvatarGender] = useState('male');
   const [voice, setVoice] = useState('male');
   const [personality, setPersonality] = useState('');
   const [imagePreview, setImagePreview] = useState(null);
   const fileRef = useRef(null);
+
+  function handleGenderChange(gender) {
+    setAvatarGender(gender);
+    setVoice(gender); // Auto-sync voice with gender
+  }
 
   function handleImageUpload(e) {
     const file = e.target.files?.[0];
@@ -30,6 +37,8 @@ export default function AvatarCreator({ onSave, onClose }) {
       title: title.trim(),
       description: description.trim() || `Custom AI assistant: ${name}`,
       voice,
+      avatarGender,
+      avatarUrl: AVATAR_MAP[avatarGender],
       personality: personality.trim() || `You are ${name}, a helpful AI assistant. ${title}. Be professional and helpful.`,
       image: imagePreview,
       background: null,
@@ -71,6 +80,21 @@ export default function AvatarCreator({ onSave, onClose }) {
             <div className="field">
               <label>Description</label>
               <input type="text" value={description} onChange={e => setDescription(e.target.value)} placeholder="Short description..." />
+            </div>
+            <div className="field">
+              <label>Avatar Gender *</label>
+              <div className="gender-toggle">
+                <button
+                  type="button"
+                  className={`gender-btn ${avatarGender === 'male' ? 'active' : ''}`}
+                  onClick={() => handleGenderChange('male')}
+                >👨 Male</button>
+                <button
+                  type="button"
+                  className={`gender-btn ${avatarGender === 'female' ? 'active' : ''}`}
+                  onClick={() => handleGenderChange('female')}
+                >👩 Female</button>
+              </div>
             </div>
             <div className="field">
               <label>Voice</label>

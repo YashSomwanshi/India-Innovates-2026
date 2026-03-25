@@ -59,7 +59,7 @@ export default function AvatarSelection({ onSelect }) {
               <p className="card-desc">{avatar.description}</p>
             </div>
             <div className="card-footer">
-              <span className="card-badge">{avatar.voice === 'female' ? '👩' : '👨'} {avatar.voice}</span>
+              <span className="card-badge">{avatar.avatarGender === 'female' || avatar.voice === 'female' ? '👩' : '👨'} {avatar.avatarGender || avatar.voice}</span>
               <button className="card-select-btn">Start Chat →</button>
             </div>
             {/* Delete button for custom avatars */}
