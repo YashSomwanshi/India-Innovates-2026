@@ -22,16 +22,15 @@ def get_model():
     if _model is None:
         try:
             from faster_whisper import WhisperModel
-            model_size = os.environ.get("WHISPER_MODEL", "small")
-            # Use GPU if available, else CPU
-            try:
-                _model = WhisperModel(model_size, device="cuda", compute_type="float16")
-                print(f"[STT] Loaded {model_size} model on GPU")
-            except Exception:
-                _model = WhisperModel(model_size, device="cpu", compute_type="int8")
-                print(f"[STT] Loaded {model_size} model on CPU")
+            model_size = os.environ.get("WHISPER_MODEL", "base")
+            # 🔥 FORCE CPU — no CUDA dependency for hackathon stability
+            _model = WhisperModel(model_size, device="cpu", compute_type="int8")
+            print(f"[STT] ✅ Loaded {model_size} model on CPU (int8)")
         except ImportError:
             print("[STT] faster-whisper not installed. Install with: pip install faster-whisper")
+            return None
+        except Exception as e:
+            print(f"[STT] ❌ Failed to load model: {e}")
             return None
     return _model
 

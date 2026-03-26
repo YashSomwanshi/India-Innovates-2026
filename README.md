@@ -1,327 +1,311 @@
-<p align="center">
-  <img src="https://img.shields.io/badge/India_Innovates-2026-orange?style=for-the-badge" alt="India Innovates 2026" />
-  <img src="https://img.shields.io/badge/100%25-Offline-green?style=for-the-badge" alt="Fully Offline" />
-  <img src="https://img.shields.io/badge/Open_Source-MIT-blue?style=for-the-badge" alt="MIT License" />
-</p>
+# 🇮🇳 AI Avatar — Civic Communication Platform
 
-# 🇮🇳 AI Avatar Civic Communication Platform
+> **India Innovates 2026** — An AI-powered, multilingual avatar platform for real-time civic communication.
 
-> **AI-powered multilingual avatar assistants for governance, education, and public outreach — running 100% locally with open-source models.**
-
-An intelligent platform that helps Indian citizens understand government schemes, public services, and welfare programs through **interactive 3D avatar assistants** that can **see**, **hear**, **speak**, and **respond** in **6 Indian languages** — all without sending a single byte to the cloud.
+Citizens interact with 3D AI avatars representing government officials through natural voice conversations — in **6 Indian languages**. The platform runs on **web and mobile** with full cross-platform synchronization.
 
 ---
 
-## ✨ Key Features
+## ✨ Features
 
-- 🗣️ **Multilingual Voice Conversations** — Speak in English, Hindi, Marathi, Tamil, Telugu, or Bengali; the avatar responds in the same language
-- 🧠 **Local AI Intelligence** — Powered by Meta Llama 3 via Ollama — no API keys, no cloud, no data leaks
-- 🎭 **Multiple Avatar Personas** — Choose from 4 pre-built avatars, create your own, or load dynamic Avaturn GLB models
-- 🎨 **High-Fidelity 3D Avatars** — GPU-accelerated React Three Fiber rendering with Avaturn API integration
-- 👄 **Advanced Animation** — Viseme-based precise lip-sync, emotion-based expressions, and natural head orientation
-- 🎤 **Full Speech Pipeline** — Voice Input → STT → Translation → LLM → Translation → TTS → Lip-Sync Animation
-- 🖼️ **Virtual Backgrounds** — Google Meet-style backgrounds with custom upload support
-- ⚡ **One-Command Setup** — Automated installer handles Node.js, Python, Ollama, and all dependencies
-- 🔌 **Microservices Architecture** — Each AI capability is an independent service for fault isolation and scalability
-
----
-
-## 📸 Screenshots
-
-<p align="center">
-  <img src="docs/screenshots/avatar-selection.png" alt="Avatar Selection Screen" width="90%" />
-  <br/><em>Avatar Selection — Choose from pre-built personas or create your own</em>
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/video-call.png" alt="Video Call Interface" width="90%" />
-  <br/><em>Video Call Interface — Real-time 3D avatar with lip-sync animation</em>
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/chat-panel.png" alt="Chat Panel" width="90%" />
-  <br/><em>Chat Panel — Text-based interaction with pipeline timing</em>
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/avatar-creator.png" alt="Avatar Creator" width="90%" />
-  <br/><em>Avatar Creator — Build custom avatars with unique personalities</em>
-</p>
-
----
-
-## 🎭 Avatar Personas
-
-| Avatar | Name | Role | Focus Areas |
-|--------|------|------|-------------|
-| 🏛️ | **Ajay** | Prime Minister Assistant | National policies, flagship schemes (Digital India, Make in India, Swachh Bharat) |
-| 🏢 | **Meera** | Chief Minister Assistant | State-level policies, regional development, local governance |
-| 📚 | **Guru** | Education Guide | NEP 2020, scholarships, digital learning, Samagra Shiksha |
-| 📢 | **Priya** | Government Spokesperson | Official information, citizen rights, public service navigation |
-| ➕ | *Custom* | Create Your Own | Define name, personality, voice, and background |
+- **3D Avatar Interaction** — Realistic male/female GLB avatars with real-time lip-sync
+- **Full Voice Pipeline** — Voice In → STT → LLM → TTS → Avatar speaks back
+- **Multilingual Support** — English, Hindi, Marathi, Tamil, Telugu, Bengali
+- **Gender-Specific Voices** — Male/female TTS voices matched to avatar gender
+- **Cross-Platform** — React web app + React Native (Expo) mobile app
+- **Avatar Management** — Create, delete, and sync custom avatars across devices
+- **Verified Badge System** — Default government avatars marked as verified
+- **Broadcast System** — Avatars can broadcast messages to followers
+- **Follow System** — Users can follow avatars and receive notifications
+- **Real-Time Sync** — WebSocket-based live updates across all connected clients
+- **Echo Prevention** — Microphone auto-mutes during avatar speech
+- **Offline STT** — CPU-based Whisper model (no GPU/CUDA required)
 
 ---
 
 ## 🏗️ Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     Web Client (:5173)                      │
-│   React + Vite │ 3D Avatar (Three.js) │ Mic │ Chat │ i18n  │
-└──────────────────────────┬──────────────────────────────────┘
-                           │ HTTP / WebSocket
-┌──────────────────────────▼──────────────────────────────────┐
-│                   Gateway API (:4000)                        │
-│         Express.js — Pipeline Orchestration + WebSocket      │
-└───┬──────┬──────┬──────┬──────┬─────────────────────────────┘
-    │      │      │      │      │
-┌───▼──┐ ┌─▼───┐ ┌▼───┐ ┌▼────┐ ┌▼──────┐
-│ STT  │ │Trans│ │LLM │ │ TTS │ │Avatar │
-│:5001 │ │:5002│ │:5003│ │:5004│ │:5005  │
-│Whisper│ │Llama│ │Llama│ │Edge │ │WebGL  │
-└──────┘ └─────┘ └─────┘ └─────┘ └───────┘
+┌─────────────────┐     ┌──────────────────┐
+│   Web Client    │     │   Mobile App     │
+│  (React + Vite) │     │ (Expo + WebView) │
+│  Three.js / R3F │     │                  │
+└────────┬────────┘     └────────┬─────────┘
+         │  REST / WebSocket     │
+         └──────────┬────────────┘
+                    │
+          ┌─────────▼─────────┐
+          │   Gateway API     │
+          │   (Node.js:4000)  │
+          │  ┌──────────────┐ │
+          │  │ Avatar Store │ │  ← Single Source of Truth
+          │  │ (JSON file)  │ │
+          │  └──────────────┘ │
+          └──┬────┬────┬──────┘
+             │    │    │
+     ┌───────▼┐ ┌─▼──┐ ┌▼───────┐
+     │  STT   │ │LLM │ │  TTS   │
+     │:5001   │ │:11434│ │:5002  │
+     │Whisper │ │Ollama│ │edge-tts│
+     └────────┘ └─────┘ └────────┘
 ```
-
-### Speech Pipeline Flow
-
-```
-🎤 Voice Input
-    ↓
-📝 Speech-to-Text (faster-whisper) + Language Detection
-    ↓
-🌐 Translation to English (Ollama/Llama3)
-    ↓
-🧠 LLM Response Generation (Llama3)
-    ↓
-🌐 Translation to Target Language
-    ↓
-🔊 Text-to-Speech (Edge-TTS) → Audio
-    ↓
-👤 3D Avatar Animation (Viseme Lip-Sync & Emotion Expressions)
-```
-
----
-
-## 🌍 Supported Languages
-
-| Code | Language | Native Name | Voice Availability |
-|------|----------|-------------|-------------------|
-| `en` | English  | English     | ✅ Male & Female  |
-| `hi` | Hindi    | हिन्दी      | ✅ Male & Female  |
-| `mr` | Marathi  | मराठी       | ✅ Male & Female  |
-| `ta` | Tamil    | தமிழ்      | ✅ Male & Female  |
-| `te` | Telugu   | తెలుగు      | ✅ Male & Female  |
-| `bn` | Bengali  | বাংলা       | ✅ Male & Female  |
-
----
-
-## 🚀 Quick Start
-
-### Prerequisites
-
-| Software | Version | Download |
-|----------|---------|----------|
-| Node.js  | 18+     | [nodejs.org](https://nodejs.org) |
-| Python   | 3.9+    | [python.org](https://python.org) |
-| Ollama   | Latest  | [ollama.com](https://ollama.com) |
-
-### Option 1: Automated Setup (Windows)
-
-```bash
-git clone https://github.com/<your-username>/ai-avatar-platform.git
-cd ai-avatar-platform
-scripts\setup.bat
-```
-
-The script will automatically:
-- ✅ Detect or install Node.js, Python, and Ollama
-- ✅ Pull the Llama3 model (~4.7 GB)
-- ✅ Install all Node.js and Python dependencies
-
-### Option 2: Manual Setup
-
-```bash
-# 1. Clone the repository
-git clone https://github.com/<your-username>/ai-avatar-platform.git
-cd ai-avatar-platform
-
-# 2. Configure environment variables
-cp .env.example .env
-
-# 2. Install Ollama and pull llama3
-ollama pull llama3
-
-# 3. Install Node.js dependencies
-cd services/translation-service && npm install && cd ../..
-cd services/llm-service && npm install && cd ../..
-cd services/avatar-service && npm install && cd ../..
-cd backend/gateway-api && npm install && cd ../..
-cd frontend/web-client && npm install && cd ../..
-
-# 4. Install Python dependencies
-cd services/stt-service && pip install -r requirements.txt && cd ../..
-cd services/tts-service && pip install -r requirements.txt && cd ../..
-```
-
-### Start the Platform
-
-```bash
-node scripts/start-all.js
-```
-
-Open **http://localhost:5173** in your browser.
 
 ---
 
 ## 🛠️ Tech Stack
 
-| Layer | Technology | Purpose |
-|-------|-----------|---------|
-| **Frontend** | React 18 + Vite 6 | Component-based UI with fast HMR dev server |
-| **3D Rendering** | React Three Fiber + Avaturn | GPU-accelerated 3D avatars with dynamic GLB model loading |
-| **Backend** | Node.js + Express 4 | REST API gateway and pipeline orchestration |
-| **Real-time** | WebSocket (ws) | Live pipeline stage updates during response generation |
-| **Speech-to-Text** | faster-whisper (Python) | CTranslate2-optimized Whisper for fast, accurate transcription |
-| **LLM** | Ollama + Meta Llama 3 | Fully local LLM inference — zero cloud dependency |
-| **Translation** | Ollama/Llama3 | LLM-powered multilingual translation (single model handles all languages) |
-| **Text-to-Speech** | edge-tts + pyttsx3 | Neural TTS with offline fallback |
-| **Animation** | Visemes & Morph Targets | Real-time viseme lip-sync and emotion-based expressions |
-| **Voice Input** | Web Speech API | Browser-native speech recognition |
-| **File Upload** | Multer | Handles audio file uploads for the STT pipeline |
-| **Dev Tooling** | Leva | Real-time 3D scene parameter tuning |
+| Layer | Technology |
+|-------|-----------|
+| **Web Frontend** | React 18, Vite, Three.js, React Three Fiber |
+| **Mobile App** | React Native (Expo), WebView |
+| **Gateway API** | Node.js, Express, WebSocket (ws) |
+| **STT Service** | Python, faster-whisper (CPU mode) |
+| **LLM Service** | Ollama (Llama 3) |
+| **TTS Service** | Python, edge-tts (Microsoft Neural Voices) |
+| **Translation** | Ollama-based translation pipeline |
+| **Data Store** | JSON file-backed storage |
+| **3D Avatars** | GLB models with morph target lip-sync |
+| **Shared Logic** | Cross-platform JS module (web + mobile) |
 
 ---
 
-## 📁 Project Structure
+## 📁 Folder Structure
 
 ```
 ai-avatar-platform/
-├── frontend/
-│   └── web-client/               # React + Vite UI
-│       └── src/
-│           ├── App.jsx            # Main app — video call interface
-│           ├── avatarData.js      # Avatar personas & localStorage persistence
-│           └── components/
-│               ├── Scenario.jsx        # 3D scene setup (lighting, camera)
-│               ├── Avatar3D.jsx        # 3D avatar model with lip-sync
-│               ├── AvatarCanvas.jsx    # Canvas-based avatar (2D fallback)
-│               ├── AvatarSelection.jsx # Avatar picker screen
-│               ├── AvatarCreator.jsx   # Custom avatar creator modal
-│               └── LanguageSelector.jsx # Language dropdown
 ├── backend/
-│   └── gateway-api/
-│       └── app.js                 # Express gateway — orchestrates full pipeline
+│   └── gateway-api/          # Central API server (port 4000)
+│       ├── app.js            # Express + WebSocket server
+│       ├── avatarStore.js    # Avatar CRUD (JSON-backed)
+│       ├── broadcastStore.js # Broadcast storage
+│       └── data/             # Runtime data (gitignored)
+├── frontend/
+│   └── web-client/           # React + Vite web app
+│       ├── src/
+│       │   ├── App.jsx       # Main app with voice pipeline
+│       │   ├── AvatarView.jsx# 3D avatar renderer (Three.js)
+│       │   └── components/   # UI components
+│       └── public/
+│           └── avatars/      # Avatar images + GLB models
+├── mobile-app/               # React Native (Expo) app
+│   ├── screens/
+│   │   ├── AvatarSelectScreen.js
+│   │   ├── AvatarCallScreen.js
+│   │   └── CreateAvatarScreen.js
+│   └── App.js
 ├── services/
-│   ├── stt-service/               # Speech-to-Text (Python + faster-whisper)
-│   ├── translation-service/       # Translation (Node.js + Ollama)
-│   ├── llm-service/               # LLM wrapper (Node.js + Ollama)
-│   ├── tts-service/               # Text-to-Speech (Python + edge-tts)
-│   └── avatar-service/            # Avatar metadata (Node.js)
-├── config/
-│   └── system-prompt.txt          # Default avatar personality prompt
+│   ├── stt-service/          # Speech-to-Text (port 5001)
+│   ├── tts-service/          # Text-to-Speech (port 5002)
+│   ├── llm-service/          # LLM config (Ollama)
+│   └── translation-service/  # Translation pipeline
+├── shared/                   # Cross-platform shared code
+│   ├── config/constants.js   # URLs, IPs, language maps
+│   └── services/
+│       ├── api.js            # REST API functions
+│       └── ws.js             # WebSocket client
 ├── scripts/
-│   ├── start-all.js               # Multi-service launcher (7 services)
-│   └── setup.bat                  # Windows automated setup
-├── .env                           # Ports & model configuration
-├── .gitignore
-├── package.json
-└── README.md
+│   ├── start-all.js          # Start all services at once
+│   └── setup.bat             # Windows setup script
+├── .env.example              # Environment template
+└── README.md                 # ← You are here
 ```
 
 ---
 
-## 📡 API Reference
+## 🚀 Setup & Run
 
-All endpoints are served through the **Gateway API** on port `4000`.
+### Prerequisites
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/health` | Health check across all services |
-| `POST` | `/api/pipeline` | **Full pipeline** — text → translate → LLM → translate → TTS → avatar |
-| `POST` | `/api/speech-to-text` | Upload audio file → transcription + language detection |
-| `POST` | `/api/translate` | Translate text between supported languages |
-| `POST` | `/api/generate-response` | Get LLM response with conversation history |
-| `POST` | `/api/text-to-speech` | Convert text to speech audio |
-| `POST` | `/api/generate-avatar-video` | Get avatar rendering metadata |
-| `GET` | `/api/audio/:fileId` | Audio file proxy (solves CORS for playback) |
-| `GET` | `/api/demo` | Demo query about Digital India |
-| `WS` | `/ws` | Real-time WebSocket for live interaction |
+- **Node.js** 18+ and npm
+- **Python** 3.9+ with pip
+- **Ollama** installed and running ([ollama.com](https://ollama.com))
+- **Expo CLI** (`npm install -g expo-cli`) — for mobile
 
----
+### 1. Clone & Install
 
-## 🎮 Services
+```bash
+git clone https://github.com/YashSomwanshi/India-Innovates-2026.git
+cd ai-avatar-platform
 
-| Service | Port | Runtime | Technology | Description |
-|---------|------|---------|-----------|-------------|
-| **STT** | 5001 | Python | faster-whisper | Speech-to-text + automatic language detection |
-| **Translation** | 5002 | Node.js | Ollama/Llama3 | Multilingual translation across 6 languages |
-| **LLM** | 5003 | Node.js | Ollama/Llama3 | Governance-focused AI response generation |
-| **TTS** | 5004 | Python | edge-tts | High-quality neural multilingual speech synthesis |
-| **Avatar** | 5005 | Node.js | Express | Avatar rendering metadata and configuration |
-| **Gateway** | 4000 | Node.js | Express + WebSocket | Central pipeline orchestrator |
-| **Frontend** | 5173 | Node.js | React + Vite | Interactive web client |
+# Install root + gateway dependencies
+npm install
+cd backend/gateway-api && npm install && cd ../..
 
----
+# Install web client
+cd frontend/web-client && npm install && cd ../..
 
-## 🧪 Demo
+# Install mobile app
+cd mobile-app && npm install && cd ../..
 
-1. Start the platform:
-   ```bash
-   node scripts/start-all.js
-   ```
-2. Open **http://localhost:5173**
-3. Select an avatar (e.g., **Ajay**)
-4. Try these prompts:
+# Install Python services
+pip install flask flask-cors faster-whisper edge-tts
+```
 
-   | Prompt | Language |
-   |--------|----------|
-   | "What is Digital India?" | English |
-   | "Explain Ayushman Bharat scheme" | English |
-   | "PM Kisan ke baare mein batao" | Hindi |
-   | "Swachh Bharat Mission patti enna?" | Tamil |
+### 2. Configure Environment
 
-5. Click the 🎤 mic button to use voice input
-6. Toggle **Auto mode** for continuous conversation
+```bash
+# Copy the example env file
+cp .env.example .env
+```
 
----
-
-## ⚙️ Configuration
-
-Configuration is managed through the `.env` file:
-
+Edit `.env` — set your LAN IP:
 ```env
-# Service Ports
 GATEWAY_PORT=4000
-STT_PORT=5001
-TRANSLATE_PORT=5002
-LLM_PORT=5003
-TTS_PORT=5004
-AVATAR_PORT=5005
-FRONTEND_PORT=5173
-
-# AI Models
 OLLAMA_URL=http://localhost:11434
-OLLAMA_MODEL=llama3               # Change to llama3:70b for higher quality
-WHISPER_MODEL=small               # Options: tiny, base, small, medium, large
-
-# Default Language
-DEFAULT_LANGUAGE=en
 ```
 
+Also update `shared/config/constants.js`:
+```js
+const LAN_IP = '192.168.1.9'; // ← Your machine's LAN IP
+```
+
+> **Find your LAN IP:** Run `ipconfig` (Windows) or `ifconfig` (Mac/Linux)
+
+### 3. Pull Ollama Model
+
+```bash
+ollama pull llama3
+```
+
+### 4. Start All Services
+
+```bash
+# Start everything at once:
+node scripts/start-all.js
+```
+
+Or start individually:
+
+| Service | Command | Port |
+|---------|---------|------|
+| Gateway API | `cd backend/gateway-api && node app.js` | 4000 |
+| STT Service | `cd services/stt-service && python stt_server.py` | 5001 |
+| TTS Service | `cd services/tts-service && python tts_server.py` | 5002 |
+| Web Client | `cd frontend/web-client && npm run dev` | 5173 |
+| Ollama | `ollama serve` | 11434 |
+
+### 5. Run Mobile App
+
+```bash
+cd mobile-app
+npx expo start
+```
+
+Scan the QR code with **Expo Go** on your phone (must be on same WiFi network).
+
 ---
 
-## 🔒 Privacy & Security
+## 🔊 Voice Pipeline
 
-- **100% Offline** — All AI models run locally on your machine
-- **No API Keys** — Zero external service dependencies
-- **No Data Exfiltration** — Voice, text, and personal data never leave your device
-- **Open Source** — Full transparency; audit every line of code
+The end-to-end voice interaction flow:
+
+```
+User speaks → Microphone captures audio
+    ↓
+Audio → STT Service (faster-whisper) → Text
+    ↓
+Text → Gateway → Ollama LLM (Llama 3) → Response text
+    ↓
+Response → TTS Service (edge-tts) → Audio file
+    ↓
+Audio URL → Frontend → 3D Avatar speaks with lip-sync
+    ↓
+Avatar finishes → Microphone re-enables → Loop
+```
+
+**Echo Prevention:** The microphone is physically disabled during avatar speech to prevent feedback loops.
 
 ---
 
+## 🤖 Avatar Sync System
+
+All avatars are stored on the **backend** (single source of truth):
+
+| Feature | Details |
+|---------|---------|
+| **Storage** | `backend/gateway-api/data/avatars.json` |
+| **Default Avatars** | 4 pre-configured government personas (protected from deletion) |
+| **Custom Avatars** | Users can create via web or mobile |
+| **Sync** | WebSocket broadcasts `AVATAR_UPDATED` event to all clients |
+| **Verified Badge** | Default avatars show ✔ Verified (blue badge) |
+| **Delete Protection** | Default avatars cannot be deleted (`type: "default"`) |
+
+**API Endpoints:**
+- `GET /api/avatars` — List all avatars
+- `POST /api/avatars/create` — Create custom avatar
+- `DELETE /api/avatars/:id` — Delete custom avatar
+
+---
+
+## 🌐 Environment Notes
+
+| Environment | API URL | Notes |
+|-------------|---------|-------|
+| **Web (dev)** | Relative (`/api/...`) | Vite proxy forwards to localhost:4000 |
+| **Mobile** | `http://<LAN_IP>:4000` | Must use LAN IP, not localhost |
+
+> ⚠️ **Mobile apps cannot use `localhost`** — they run on a physical device. Always use your machine's LAN IP address.
+
+---
+
+## 🔧 Troubleshooting
+
+### STT: "cublas64_12.dll not found"
+The STT service runs in **CPU-only mode** by default. If you see CUDA errors:
+```python
+# In stt_server.py — already configured:
+model = WhisperModel("base", device="cpu", compute_type="int8")
+```
+
+### Mobile: "Network request failed"
+1. Ensure phone and computer are on the **same WiFi**
+2. Check `shared/config/constants.js` → `LAN_IP` matches your machine
+3. Firewall: allow inbound connections on ports 4000, 5173
+
+### Mobile: "AbortSignal.timeout is not a function"
+Already fixed — the shared API uses `AbortController` + `setTimeout` instead.
+
+### Mobile: "Only one Recording object"
+Already fixed — recording lifecycle properly cleans previous instance before creating new one.
+
+---
+
+## 🗣️ Supported Languages
+
+| Code | Language | TTS Voice (Male) | TTS Voice (Female) |
+|------|----------|-------------------|---------------------|
+| `en` | English | en-IN-PrabhatNeural | en-IN-NeerjaNeural |
+| `hi` | Hindi | hi-IN-MadhurNeural | hi-IN-SwaraNeural |
+| `mr` | Marathi | mr-IN-ManoharNeural | mr-IN-AarohiNeural |
+| `ta` | Tamil | ta-IN-ValluvarNeural | ta-IN-PallaviNeural |
+| `te` | Telugu | te-IN-MohanNeural | te-IN-ShrutiNeural |
+| `bn` | Bengali | bn-IN-BashkarNeural | bn-IN-TanishaaNeural |
+
+---
+
+## 🔮 Future Scope
+
+- **Admin Dashboard** — Manage avatars, broadcasts, and user analytics
+- **Multi-turn Memory** — Persistent conversation history per user
+- **Document Q&A** — Upload PDFs for avatar to reference
+- **Sign Language Avatar** — Accessibility support for hearing-impaired users
+- **Regional Dialect Support** — Sub-dialect recognition and response
+- **Deployment** — Docker containerization + cloud hosting
+
+---
+
+## 👥 Team
+
+**India Innovates 2026** — AI Avatar Civic Communication Platform
+
+---
+
+## 📄 License
+
+This project was built for the India Innovates 2026 hackathon.
+
+---
 
 <p align="center">
-  <b>Built with ❤️ for India Innovates 2026 — Civic Technology Hackathon</b>
-  <br/>
-  <sub>Empowering citizens through accessible, AI-driven governance communication</sub>
+  <b>Built with ❤️ for Digital India</b>
 </p>

@@ -5,6 +5,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
+    host: true, // Expose on LAN for mobile WebView access
     proxy: {
       '/api': {
         target: 'http://localhost:4000',
@@ -16,4 +17,7 @@ export default defineConfig({
       },
     },
   },
+  // SPA fallback: /avatar-view and other client routes serve index.html
+  appType: 'spa',
 });
+

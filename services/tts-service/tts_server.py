@@ -87,12 +87,14 @@ def synthesize():
 
     text = data["text"]
     language = data.get("language", "en")
-    gender = data.get("gender", "female")
+    gender = data.get("gender", "male")  # Default to MALE voice
     rate = data.get("rate", "+0%")
 
-    # Select voice
+    # Select voice based on gender
     voice_map = VOICE_MAP if gender == "female" else VOICE_MAP_MALE
-    voice = voice_map.get(language, VOICE_MAP.get("en"))
+    voice = voice_map.get(language, VOICE_MAP_MALE.get("en"))
+
+    print(f"[TTS] Gender: {gender}, Language: {language}, Voice: {voice}", flush=True)
 
     # Generate unique filename
     file_id = str(uuid.uuid4())[:8]

@@ -5,7 +5,9 @@ import { Leva } from 'leva';
 import { Scenario } from './components/Scenario';
 import LanguageSelector from './components/LanguageSelector';
 import AvatarSelection from './components/AvatarSelection';
-import { getAvatarUrl } from './avatarData';
+import NotificationBell from './components/NotificationBell';
+import BroadcastToast from './components/BroadcastToast';
+import { getAvatarUrl, DEFAULT_AVATARS, loadAvatars } from './avatarData';
 
 const GATEWAY_URL = '';
 
@@ -31,6 +33,17 @@ const BACKGROUNDS = [
   { id: 'library', label: 'Library', value: 'url(/backgrounds/library.png)' },
 ];
 
+// ─── Generate or load persistent userId ───
+function getOrCreateUserId() {
+  const key = 'ai_avatar_user_id';
+  let id = localStorage.getItem(key);
+  if (!id) {
+    id = 'user_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+    localStorage.setItem(key, id);
+  }
+  return id;
+}
+
 export default function App() {
   // ── Screen: 'select' or 'call' ──
   const [screen, setScreen] = useState('select');
@@ -51,6 +64,16 @@ export default function App() {
   const [bgPanelOpen, setBgPanelOpen] = useState(false);
   const [selectedBg, setSelectedBg] = useState('none');
   const [customBg, setCustomBg] = useState(null);
+
+  // ── Broadcast + Follow State ──
+  const [userId] = useState(() => getOrCreateUserId());
+  const [followedAvatars, setFollowedAvatars] = useState([]);
+  const [followerCounts, setFollowerCounts] = useState({});
+  const [notifications, setNotifications] = useState([]);
+  const [toastBroadcast, setToastBroadcast] = useState(null);
+  const [currentBroadcast, setCurrentBroadcast] = useState(null);
+  const [mode, setMode] = useState('conversation'); // 'conversation' | 'broadcast'
+  const wsRef = useRef(null);
 
   const chatEndRef = useRef(null);
   const audioRef = useRef(null);
@@ -85,7 +108,7 @@ export default function App() {
         if (track) track.enabled = false;
       }
     } else {
-      if (isListening) {
+      if (isListening && mode !== 'broadcast') {
         if (micStreamRef.current) {
           const track = micStreamRef.current.getAudioTracks()[0];
           if (track) track.enabled = true;
@@ -94,10 +117,217 @@ export default function App() {
           setTimeout(() => { try { recognitionRef.current.start(); } catch(e){} }, 500);
         }
       }
+      // After broadcast speech ends, switch to Q&A mode
+      if (mode === 'broadcast' && currentBroadcast) {
+        setMode('conversation');
+        // Re-enable mic for follow-up questions
+        setTimeout(() => {
+          getAudioContext();
+          if (!micStreamRef.current) startContinuousListening();
+          else {
+            const track = micStreamRef.current.getAudioTracks()[0];
+            if (track) track.enabled = true;
+            setIsListening(true);
+          }
+        }, 500);
+      }
     }
   }, [isSpeaking, isListening]);
   useEffect(() => { conversationModeRef.current = conversationMode; }, [conversationMode]);
   useEffect(() => { languageRef.current = language; }, [language]);
+
+  // ── Build avatar map for notifications ──
+  const avatarMap = {};
+  const allAvatars = loadAvatars();
+  allAvatars.forEach(a => { avatarMap[a.id] = a; });
+
+  // ── Load follows + follower counts on mount ──
+  useEffect(() => {
+    fetchFollows();
+    fetchFollowerCounts();
+  }, []);
+
+  async function fetchFollows() {
+    try {
+      const res = await fetch(`${GATEWAY_URL}/api/follows/${userId}`);
+      const data = await res.json();
+      setFollowedAvatars(data.followedAvatars || []);
+    } catch (e) { console.warn('Fetch follows failed:', e); }
+  }
+
+  async function fetchFollowerCounts() {
+    try {
+      const res = await fetch(`${GATEWAY_URL}/api/follower-counts`);
+      const data = await res.json();
+      setFollowerCounts(data || {});
+    } catch (e) { console.warn('Fetch follower counts failed:', e); }
+  }
+
+  async function handleFollow(avatarId) {
+    try {
+      const res = await fetch(`${GATEWAY_URL}/api/follow`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, avatarId }),
+      });
+      const data = await res.json();
+      setFollowedAvatars(data.followedAvatars || []);
+      fetchFollowerCounts();
+    } catch (e) { console.warn('Follow failed:', e); }
+  }
+
+  async function handleUnfollow(avatarId) {
+    try {
+      const res = await fetch(`${GATEWAY_URL}/api/unfollow`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, avatarId }),
+      });
+      const data = await res.json();
+      setFollowedAvatars(data.followedAvatars || []);
+      fetchFollowerCounts();
+    } catch (e) { console.warn('Unfollow failed:', e); }
+  }
+
+  // ── WebSocket connection with registration ──
+  useEffect(() => {
+    function connectWs() {
+      const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+      const ws = new WebSocket(`${protocol}://${window.location.host}/ws`);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        console.log('[WS] Connected, registering userId:', userId);
+        ws.send(JSON.stringify({ type: 'register', userId }));
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+
+          if (data.type === 'broadcast_notification') {
+            const bc = data.broadcast;
+            // Add to notifications
+            setNotifications(prev => [{ broadcast: bc, read: false }, ...prev]);
+            // Show toast
+            setToastBroadcast(bc);
+            // Cache in localStorage
+            try {
+              const cached = JSON.parse(localStorage.getItem('broadcast_cache') || '[]');
+              cached.unshift(bc);
+              if (cached.length > 50) cached.length = 50;
+              localStorage.setItem('broadcast_cache', JSON.stringify(cached));
+            } catch (e) {}
+          }
+
+          if (data.type === 'broadcast_audio') {
+            // Broadcast watch response — enqueue audio
+            if (data.audio_url) {
+              setCurrentText(data.text || '');
+              setMessages(prev => [...prev, {
+                role: 'assistant',
+                content: data.text || data.originalText || '',
+                time: new Date().toLocaleTimeString(),
+                isBroadcast: true,
+              }]);
+              enqueueAudio(data.audio_url);
+            }
+            setIsLoading(false);
+            setPipelineStage(null);
+          }
+
+          // Real-time avatar sync — notify AvatarSelection to refetch
+          if (data.type === 'AVATAR_UPDATED') {
+            window.dispatchEvent(new Event('avatar-updated'));
+          }
+        } catch (e) {}
+      };
+
+      ws.onclose = () => {
+        console.log('[WS] Disconnected, reconnecting in 3s...');
+        setTimeout(connectWs, 3000);
+      };
+    }
+
+    connectWs();
+    return () => { if (wsRef.current) wsRef.current.close(); };
+  }, [userId]);
+
+  // ── Watch Broadcast ──
+  function handleWatchBroadcast(broadcast) {
+    // Find the avatar for this broadcast
+    const avatar = avatarMap[broadcast.avatarId] || DEFAULT_AVATARS.find(a => a.id === broadcast.avatarId);
+    if (!avatar) return;
+
+    // Mark notification as read
+    setNotifications(prev => prev.map(n =>
+      n.broadcast.id === broadcast.id ? { ...n, read: true } : n
+    ));
+
+    // Switch to call screen in broadcast mode
+    setActiveAvatar(avatar);
+    setCurrentBroadcast(broadcast);
+    setMode('broadcast');
+    setMessages([{
+      role: 'system',
+      content: `📺 Broadcast: "${broadcast.title}"`,
+      time: new Date().toLocaleTimeString(),
+      isBroadcast: true,
+    }]);
+    setInput('');
+    setChatOpen(false);
+
+    if (avatar.background) {
+      setSelectedBg('custom');
+      setCustomBg(avatar.background);
+    } else {
+      setSelectedBg('none');
+      setCustomBg(null);
+    }
+    setScreen('call');
+
+    // Do NOT start mic in broadcast mode — trigger TTS directly
+    setTimeout(() => {
+      getAudioContext();
+      triggerBroadcastPlayback(broadcast, avatar);
+    }, 1000);
+  }
+
+  async function triggerBroadcastPlayback(broadcast, avatar) {
+    setIsLoading(true);
+    setPipelineStage('preparing_broadcast');
+
+    // Send via WebSocket for broadcast_watch
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'broadcast_watch',
+        broadcastId: broadcast.id,
+        language: language,
+        gender: avatar.avatarGender || avatar.voice || 'male',
+      }));
+    } else {
+      // Fallback: use REST pipeline directly
+      try {
+        const res = await fetch(`${GATEWAY_URL}/api/pipeline`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: broadcast.message,
+            language: language,
+            history: [],
+            gender: avatar.avatarGender || avatar.voice || 'male',
+          }),
+        });
+        const data = await res.json();
+        if (data.audio_url) {
+          setCurrentText(data.response);
+          enqueueAudio(data.audio_url);
+        }
+      } catch (e) { console.error('Broadcast playback fallback failed:', e); }
+      setIsLoading(false);
+      setPipelineStage(null);
+    }
+  }
 
   function getAudioContext() {
     if (!audioCtxRef.current) {
@@ -150,6 +380,8 @@ export default function App() {
     setMessages([]);
     setInput('');
     setChatOpen(false);
+    setCurrentBroadcast(null);
+    setMode('conversation');
     // Use avatar's default background if set
     if (avatar.background) {
       setSelectedBg('custom');
@@ -176,18 +408,30 @@ export default function App() {
     if (vadIntervalRef.current) clearInterval(vadIntervalRef.current);
     if (recognitionRef.current) { recognitionRef.current.stop(); recognitionRef.current = null; }
     setIsListening(false);
+    setCurrentBroadcast(null);
+    setMode('conversation');
     setScreen('select');
   }
 
-  // ── Build conversation history with personality prompt ──
+  // ── Build conversation history with personality prompt + broadcast context ──
   function buildHistory() {
     const history = [];
     // Inject personality as system message
     if (activeAvatar?.personality) {
       history.push({ role: 'system', content: activeAvatar.personality });
     }
+    // Inject broadcast context for follow-up Q&A
+    if (currentBroadcast) {
+      const bcAvatarName = avatarMap[currentBroadcast.avatarId]?.name || currentBroadcast.avatarId;
+      history.push({
+        role: 'system',
+        content: `The user just watched a broadcast from ${bcAvatarName}: "${currentBroadcast.message}". Answer the user's follow-up questions in the context of this broadcast. Reference the broadcast content when relevant.`,
+      });
+    }
     // Add last 10 messages
-    messages.slice(-10).forEach(m => history.push({ role: m.role, content: m.content }));
+    messages.slice(-10).forEach(m => {
+      if (m.role !== 'system') history.push({ role: m.role, content: m.content });
+    });
     return history;
   }
 
@@ -259,6 +503,7 @@ export default function App() {
           message: text.trim(),
           language,
           history: buildHistory(),
+          gender: activeAvatar?.avatarGender || activeAvatar?.voice || 'male',
         }),
       });
       
@@ -311,7 +556,7 @@ export default function App() {
       setPipelineStage(null);
       setIsLoading(false);
     }
-  }, [language, messages, isLoading, conversationMode, activeAvatar]);
+  }, [language, messages, isLoading, conversationMode, activeAvatar, currentBroadcast]);
 
   const sendMessageRef = useRef(sendMessage);
   useEffect(() => { sendMessageRef.current = sendMessage; }, [sendMessage]);
@@ -455,13 +700,27 @@ export default function App() {
   const avatarInitial = avatarName.charAt(0);
   const avatarUrl = getAvatarUrl(activeAvatar);
 
-  // Layer 10: Debug Logging
-  console.log('Selected Gender:', activeAvatar?.avatarGender || 'default');
-  console.log('Avatar URL:', avatarUrl);
-
   // ═══ SELECTION SCREEN ═══
   if (screen === 'select') {
-    return <AvatarSelection onSelect={handleAvatarSelect} />;
+    return (
+      <>
+        <AvatarSelection
+          onSelect={handleAvatarSelect}
+          userId={userId}
+          followedAvatars={followedAvatars}
+          onFollow={handleFollow}
+          onUnfollow={handleUnfollow}
+          followerCounts={followerCounts}
+          onWatchBroadcast={handleWatchBroadcast}
+        />
+        <BroadcastToast
+          broadcast={toastBroadcast}
+          avatarName={avatarMap[toastBroadcast?.avatarId]?.name}
+          onWatch={() => { if (toastBroadcast) handleWatchBroadcast(toastBroadcast); setToastBroadcast(null); }}
+          onDismiss={() => setToastBroadcast(null)}
+        />
+      </>
+    );
   }
 
   // ═══ VIDEO CALL SCREEN ═══
@@ -480,6 +739,19 @@ export default function App() {
           </div>
         </div>
         <div className="header-right">
+          {/* Broadcast Mode label */}
+          {mode === 'broadcast' && (
+            <div className="broadcast-mode-label">📺 Broadcast Mode</div>
+          )}
+          {currentBroadcast && mode === 'conversation' && (
+            <div className="broadcast-qa-label">💬 Q&A Mode</div>
+          )}
+          <NotificationBell
+            notifications={notifications}
+            onWatch={handleWatchBroadcast}
+            onClear={() => setNotifications([])}
+            avatarMap={avatarMap}
+          />
           <LanguageSelector language={language} onChange={setLanguage} />
           <button className="hdr-btn" onClick={() => setBgPanelOpen(p => !p)} title="Virtual Background">🖼️ Background</button>
           <button className={`hdr-btn ${chatOpen ? 'active' : ''}`} onClick={() => setChatOpen(p => !p)} title="Toggle Chat">💬 Chat</button>
@@ -504,10 +776,11 @@ export default function App() {
             <p>{avatarTitle} · Government of India</p>
           </div>
 
-          {(isSpeaking || isListening) && (
-            <div className={`status-pill ${isSpeaking ? 'speaking' : isListening ? 'listening active' : 'listening'}`}>
+          {(isSpeaking || isListening || mode === 'broadcast') && (
+            <div className={`status-pill ${isSpeaking ? 'speaking' : mode === 'broadcast' ? 'broadcast' : isListening ? 'listening active' : 'listening'}`}>
+              {mode === 'broadcast' && !isSpeaking && <>📺 Preparing broadcast...</>}
               {isSpeaking && <><div className="bars"><span /><span /><span /><span /><span /></div> Speaking</>}
-              {isListening && !isSpeaking && <><div className="pulse-dot" /> Listening…</>}
+              {isListening && !isSpeaking && mode !== 'broadcast' && <><div className="pulse-dot" /> Listening…</>}
             </div>
           )}
 
@@ -518,6 +791,7 @@ export default function App() {
               onClick={() => { getAudioContext(); toggleListening(); }}
               title={isListening ? 'Mute Microphone' : `Unmute Microphone`}
               id="mic-button"
+              disabled={mode === 'broadcast'}
             >
               {isListening ? (
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /><line x1="12" y1="19" x2="12" y2="22" /></svg>
@@ -535,7 +809,10 @@ export default function App() {
       {/* ── Chat Panel (fixed overlay) ── */}
       <aside className={`chat-panel ${chatOpen ? 'open' : ''}`}>
         <div className="chat-top">
-          <span className="chat-title">Chat</span>
+          <span className="chat-title">
+            Chat
+            {currentBroadcast && <span className="chat-broadcast-tag"> · 📺 {currentBroadcast.title}</span>}
+          </span>
           <button className="chat-close" onClick={() => setChatOpen(false)}>✕</button>
         </div>
 
@@ -554,8 +831,9 @@ export default function App() {
           )}
 
           {messages.map((msg, i) => (
-            <div key={i} className={`msg ${msg.role}`}>
+            <div key={i} className={`msg ${msg.role} ${msg.isBroadcast ? 'broadcast-msg' : ''}`}>
               {msg.role === 'assistant' && <div className="msg-avatar">{avatarInitial}</div>}
+              {msg.role === 'system' && <div className="msg-avatar">📺</div>}
               <div className="msg-body">
                 <div className="msg-text">{msg.content}</div>
                 <div className="msg-time">{msg.time}{msg.pipelineTime && ` · ${(msg.pipelineTime / 1000).toFixed(1)}s`}</div>
@@ -575,8 +853,8 @@ export default function App() {
         <div className="chat-input">
           <div className="input-wrap">
             <textarea className="input-field" value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
-              placeholder={`Ask ${avatarName} anything…`} rows={1} disabled={isLoading} id="text-input" />
-            <button className="send-btn" onClick={() => { getAudioContext(); sendMessage(input); }} disabled={!input.trim() || isLoading} id="send-button">➤</button>
+              placeholder={currentBroadcast ? `Ask about "${currentBroadcast.title}"…` : `Ask ${avatarName} anything…`} rows={1} disabled={isLoading || mode === 'broadcast'} id="text-input" />
+            <button className="send-btn" onClick={() => { getAudioContext(); sendMessage(input); }} disabled={!input.trim() || isLoading || mode === 'broadcast'} id="send-button">➤</button>
           </div>
         </div>
       </aside>
@@ -603,6 +881,14 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Toast for broadcast notifications */}
+      <BroadcastToast
+        broadcast={toastBroadcast}
+        avatarName={avatarMap[toastBroadcast?.avatarId]?.name}
+        onWatch={() => { if (toastBroadcast) handleWatchBroadcast(toastBroadcast); setToastBroadcast(null); }}
+        onDismiss={() => setToastBroadcast(null)}
+      />
     </div>
   );
 }

@@ -15,6 +15,10 @@ const path = require('path');
 const fs = require('fs');
 require('dotenv').config(); // Ensure dotenv is loaded so process.env is populated
 
+// Broadcast + Follow system
+const broadcastStore = require('./broadcastStore');
+const avatarStore = require('./avatarStore');
+
 // LAYER 7: RUNTIME SAFETY CHECK
 const requiredEnvs = ['GATEWAY_PORT', 'OLLAMA_URL'];
 requiredEnvs.forEach(key => {
@@ -144,6 +148,44 @@ app.get('/api/health', async (req, res) => {
   res.json({ gateway: 'ok', port: PORT, services: checks });
 });
 
+// ─── Avatar CRUD (Single Source of Truth) ───
+app.get('/api/avatars', (req, res) => {
+  const avatars = avatarStore.getAvatars();
+  console.log(`[Gateway] GET /api/avatars -> returning ${avatars.length} avatars`);
+  res.json({ avatars });
+});
+
+app.post('/api/avatars/create', (req, res) => {
+  const { name, title, description, gender, avatarGender, voice, personality, image, emoji } = req.body;
+  if (!name) return res.status(400).json({ error: 'Missing "name"' });
+  const avatar = avatarStore.createAvatar({ name, title, description, gender, avatarGender, voice, personality, image, emoji });
+
+  // Broadcast to all connected clients for real-time sync
+  const notification = JSON.stringify({ type: 'AVATAR_UPDATED' });
+  for (const [, sockets] of wsClients) {
+    for (const ws of sockets) {
+      try { ws.send(notification); } catch (e) {}
+    }
+  }
+
+  res.json({ avatar });
+});
+
+app.delete('/api/avatars/:id', (req, res) => {
+  const result = avatarStore.deleteAvatar(req.params.id);
+  if (!result.success) return res.status(400).json(result);
+
+  // Broadcast to all connected clients for real-time sync
+  const notification = JSON.stringify({ type: 'AVATAR_UPDATED' });
+  for (const [, sockets] of wsClients) {
+    for (const ws of sockets) {
+      try { ws.send(notification); } catch (e) {}
+    }
+  }
+
+  res.json({ success: true });
+});
+
 // ─── Speech-to-Text ───
 app.post('/api/speech-to-text', upload.single('audio'), async (req, res) => {
   try {
@@ -244,8 +286,10 @@ app.get('/api/audio/:fileId', async (req, res) => {
 
 // ─── Stream Pipeline (SSE) ───
 app.post('/api/stream', async (req, res) => {
-  const { message, language, history } = req.body;
+  const { message, language, history, gender } = req.body;
   if (!message) return res.status(400).json({ error: 'Missing "message"' });
+  const safeGender = gender === 'female' ? 'female' : 'male';
+  console.log('[Gateway Stream] Gender:', safeGender);
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -266,7 +310,7 @@ app.post('/api/stream', async (req, res) => {
     res.write(`data: ${JSON.stringify({ type: 'text', chunk: ans })}\n\n`);
     try {
       const ttsResult = await callService('tts', '/synthesize', {
-        body: JSON.stringify({ text: ans, language: targetLang, gender: 'male' }),
+        body: JSON.stringify({ text: ans, language: targetLang, gender: safeGender }),
       });
       if (ttsResult.file_id) {
         res.write(`data: ${JSON.stringify({ type: 'audio', url: `/api/audio/${ttsResult.file_id}`, index: 0 })}\n\n`);
@@ -304,7 +348,7 @@ app.post('/api/stream', async (req, res) => {
       
       try {
         const ttsResult = await callService('tts', '/synthesize', {
-          body: JSON.stringify({ text: finalSentence, language: targetLang, gender: 'male' }),
+          body: JSON.stringify({ text: finalSentence, language: targetLang, gender: safeGender }),
         });
         if (ttsResult.file_id) {
           res.write(`data: ${JSON.stringify({ type: 'audio', url: `/api/audio/${ttsResult.file_id}`, index: idx })}\n\n`);
@@ -408,7 +452,9 @@ app.post('/api/stream', async (req, res) => {
 // ─── Full Pipeline (text input) ───
 app.post('/api/pipeline', async (req, res) => {
   const startTime = Date.now();
-  const { message, language, history } = req.body;
+  const { message, language, history, gender } = req.body;
+  const safeGender = gender === 'female' ? 'female' : 'male';
+  console.log('[Gateway Pipeline] Gender:', safeGender);
 
   if (!message) return res.status(400).json({ error: 'Missing "message"' });
 
@@ -450,7 +496,7 @@ app.post('/api/pipeline', async (req, res) => {
     let audioUrl = null;
     try {
       const ttsResult = await callService('tts', '/synthesize', {
-        body: JSON.stringify({ text: finalResponse, language: targetLang, gender: 'male' }),
+        body: JSON.stringify({ text: finalResponse, language: targetLang, gender: safeGender }),
       });
       audioUrl = ttsResult.file_id ? `/api/audio/${ttsResult.file_id}` : null;
       stages.push({ stage: 'tts', time: Date.now() - startTime });
@@ -506,19 +552,153 @@ app.get('/api/demo', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════
+// ─── BROADCAST + FOLLOW SYSTEM ───
+// ═══════════════════════════════════════════════════════════
+
+// WebSocket client registry: userId → Set<ws>
+const wsClients = new Map();
+
+// ─── Follow / Unfollow ───
+app.post('/api/follow', (req, res) => {
+  const { userId, avatarId } = req.body;
+  if (!userId || !avatarId) return res.status(400).json({ error: 'Missing userId or avatarId' });
+  const result = broadcastStore.followAvatar(userId, avatarId);
+  res.json(result);
+});
+
+app.post('/api/unfollow', (req, res) => {
+  const { userId, avatarId } = req.body;
+  if (!userId || !avatarId) return res.status(400).json({ error: 'Missing userId or avatarId' });
+  const result = broadcastStore.unfollowAvatar(userId, avatarId);
+  res.json(result);
+});
+
+app.get('/api/follows/:userId', (req, res) => {
+  const follows = broadcastStore.getUserFollows(req.params.userId);
+  res.json({ followedAvatars: follows });
+});
+
+app.get('/api/follower-counts', (req, res) => {
+  res.json(broadcastStore.getFollowerCounts());
+});
+
+// ─── Broadcasts ───
+app.post('/api/broadcast/create', (req, res) => {
+  const { avatarId, title, message, language } = req.body;
+  if (!avatarId || !title || !message) {
+    return res.status(400).json({ error: 'Missing avatarId, title, or message' });
+  }
+  const broadcast = broadcastStore.createBroadcast({ avatarId, title, message, language });
+  console.log(`[Broadcast] Created: "${title}" by ${avatarId}`);
+
+  // Notify all followers via WebSocket
+  const followers = broadcastStore.getFollowers(avatarId);
+  const notification = JSON.stringify({
+    type: 'broadcast_notification',
+    broadcast,
+  });
+  let notified = 0;
+  for (const followerId of followers) {
+    const sockets = wsClients.get(followerId);
+    if (sockets) {
+      for (const ws of sockets) {
+        try { ws.send(notification); notified++; } catch (e) {}
+      }
+    }
+  }
+  console.log(`[Broadcast] Notified ${notified} connected followers out of ${followers.length} total`);
+
+  res.json({ broadcast, notifiedCount: notified });
+});
+
+app.get('/api/broadcasts', (req, res) => {
+  const broadcasts = broadcastStore.getBroadcasts();
+  res.json({ broadcasts });
+});
+
+app.get('/api/broadcasts/:avatarId', (req, res) => {
+  const broadcasts = broadcastStore.getBroadcastsByAvatar(req.params.avatarId);
+  res.json({ broadcasts });
+});
+
 // ─── WebSocket for real-time interaction ───
 wss.on('connection', (ws) => {
   console.log('[WS] Client connected');
+  let registeredUserId = null;
 
   ws.on('message', async (raw) => {
     try {
       const msg = JSON.parse(raw.toString());
 
+      // ─── Register userId for broadcast notifications ───
+      if (msg.type === 'register') {
+        registeredUserId = msg.userId;
+        if (!wsClients.has(registeredUserId)) {
+          wsClients.set(registeredUserId, new Set());
+        }
+        wsClients.get(registeredUserId).add(ws);
+        console.log(`[WS] Registered user: ${registeredUserId}`);
+        ws.send(JSON.stringify({ type: 'registered', userId: registeredUserId }));
+        return;
+      }
+
+      // ─── Broadcast Watch: text → translate → TTS (skip STT & LLM) ───
+      if (msg.type === 'broadcast_watch') {
+        const { broadcastId, language, gender } = msg;
+        const broadcast = broadcastStore.getBroadcastById(broadcastId);
+        if (!broadcast) {
+          ws.send(JSON.stringify({ type: 'error', error: 'Broadcast not found' }));
+          return;
+        }
+
+        ws.send(JSON.stringify({ type: 'status', stage: 'preparing_broadcast' }));
+
+        let spokenText = broadcast.message;
+        const targetLang = language || broadcast.language || 'en';
+        const broadcastLang = broadcast.language || 'en';
+
+        // Translate if needed
+        if (targetLang !== broadcastLang) {
+          ws.send(JSON.stringify({ type: 'status', stage: 'translating' }));
+          try {
+            const tr = await callService('translate', '/translate', {
+              body: JSON.stringify({ text: broadcast.message, source_lang: broadcastLang, target_lang: targetLang }),
+            });
+            spokenText = tr.translated_text || broadcast.message;
+          } catch (e) { console.warn('[Broadcast Watch] Translation failed, using original'); }
+        }
+
+        // TTS
+        let audioUrl = null;
+        try {
+          ws.send(JSON.stringify({ type: 'status', stage: 'synthesizing_voice' }));
+          const ttsResult = await callService('tts', '/synthesize', {
+            body: JSON.stringify({ text: spokenText, language: targetLang, gender: gender || 'male' }),
+          });
+          audioUrl = ttsResult.file_id ? `/api/audio/${ttsResult.file_id}` : null;
+        } catch (e) {
+          console.error('[Broadcast Watch] TTS error:', e.message);
+        }
+
+        ws.send(JSON.stringify({
+          type: 'broadcast_audio',
+          broadcastId: broadcast.id,
+          text: spokenText,
+          originalText: broadcast.message,
+          language: targetLang,
+          audio_url: audioUrl,
+        }));
+        return;
+      }
+
       if (msg.type === 'text') {
         // Send pipeline stages in real-time
         ws.send(JSON.stringify({ type: 'status', stage: 'processing', message: 'Generating response...' }));
 
-        const { message, language, history } = msg;
+        const { message, language, history, gender } = msg;
+        const safeGender = gender === 'female' ? 'female' : 'male';
+        console.log('[WS Pipeline] Gender:', safeGender);
         const targetLang = language || 'en';
 
         // LLM
@@ -550,7 +730,7 @@ wss.on('connection', (ws) => {
         try {
           ws.send(JSON.stringify({ type: 'status', stage: 'synthesizing_voice' }));
           const ttsResult = await callService('tts', '/synthesize', {
-            body: JSON.stringify({ text: finalResponse, language: targetLang }),
+            body: JSON.stringify({ text: finalResponse, language: targetLang, gender: safeGender }),
           });
           audioUrl = ttsResult.file_id ? `/api/audio/${ttsResult.file_id}` : null;
         } catch (e) { /* TTS optional */ }
@@ -572,7 +752,16 @@ wss.on('connection', (ws) => {
     }
   });
 
-  ws.on('close', () => console.log('[WS] Client disconnected'));
+  ws.on('close', () => {
+    // Clean up registered user
+    if (registeredUserId && wsClients.has(registeredUserId)) {
+      wsClients.get(registeredUserId).delete(ws);
+      if (wsClients.get(registeredUserId).size === 0) {
+        wsClients.delete(registeredUserId);
+      }
+    }
+    console.log('[WS] Client disconnected');
+  });
 });
 
 // ─── Start server ───
