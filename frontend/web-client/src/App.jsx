@@ -74,7 +74,28 @@ export default function App() {
   useEffect(() => { latestInputRef.current = input; }, [input]);
 
   useEffect(() => { isLoadingRef.current = isLoading; }, [isLoading]);
-  useEffect(() => { isSpeakingRef.current = isSpeaking; }, [isSpeaking]);
+  useEffect(() => { 
+    isSpeakingRef.current = isSpeaking; 
+    if (isSpeaking) {
+      if (recognitionRef.current) {
+        try { recognitionRef.current.abort(); } catch(e) {}
+      }
+      if (micStreamRef.current) {
+        const track = micStreamRef.current.getAudioTracks()[0];
+        if (track) track.enabled = false;
+      }
+    } else {
+      if (isListening) {
+        if (micStreamRef.current) {
+          const track = micStreamRef.current.getAudioTracks()[0];
+          if (track) track.enabled = true;
+        }
+        if (recognitionRef.current && micStreamRef.current) {
+          setTimeout(() => { try { recognitionRef.current.start(); } catch(e){} }, 500);
+        }
+      }
+    }
+  }, [isSpeaking, isListening]);
   useEffect(() => { conversationModeRef.current = conversationMode; }, [conversationMode]);
   useEffect(() => { languageRef.current = language; }, [language]);
 
@@ -319,22 +340,15 @@ export default function App() {
         const volumeThreshold = 5; // Adjust this if background noise is high
         
         if (avgVolume > volumeThreshold) {
+          // Do not listen or interrupt when avatar is speaking
+          if (isSpeakingRef.current) return;
+
           if (!isUserSpeakingRef.current) {
             isUserSpeakingRef.current = true;
           }
           if (silenceTimerRef.current) {
             clearTimeout(silenceTimerRef.current);
             silenceTimerRef.current = null;
-          }
-          
-          // --- INTERRUPTION LOGIC (LAYER 4) ---
-          if (isSpeakingRef.current || isLoadingRef.current || pipelineStageRef.current === 'thinking') {
-             stopAllSpeechAndAudio();
-             // Optional: flush SR transcript by restarting it
-             if (recognitionRef.current) {
-                 recognitionRef.current.stop();
-                 setTimeout(() => { try { recognitionRef.current.start(); } catch(e){} }, 100);
-             }
           }
         } else {
           // Silence detected
@@ -368,6 +382,9 @@ export default function App() {
     recognitionRef.current = recognition;
 
     recognition.onresult = (event) => {
+      // Prevent listening when avatar is speaking
+      if (isSpeakingRef.current) return;
+
       let interim = '';
       let finalStr = '';
       for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -377,12 +394,22 @@ export default function App() {
       
       const currentFull = finalStr + interim;
       if (currentFull.trim()) setInput(currentFull.trim());
+
+      // Auto-submit if STT yields a final result
+      if (finalStr.trim() && !interim.trim()) {
+         sendMessageRef.current(finalStr.trim());
+         setInput('');
+         if (recognitionRef.current) {
+             recognitionRef.current.stop();
+             setTimeout(() => { try { recognitionRef.current.start(); } catch(e){} }, 100);
+         }
+      }
     };
 
     recognition.onend = () => {
-      // Keep it continuous
-      if (micStreamRef.current) {
-         try { recognition.start(); } catch(e) {}
+      // Keep it continuous, but do NOT restart if avatar is speaking
+      if (micStreamRef.current && !isSpeakingRef.current) {
+         setTimeout(() => { try { recognition.start(); } catch(e) {} }, 100);
       }
     };
     recognition.onerror = () => {};

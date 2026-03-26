@@ -145,6 +145,9 @@ The script will automatically:
 git clone https://github.com/<your-username>/ai-avatar-platform.git
 cd ai-avatar-platform
 
+# 2. Configure environment variables
+cp .env.example .env
+
 # 2. Install Ollama and pull llama3
 ollama pull llama3
 
