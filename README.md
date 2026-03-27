@@ -6,7 +6,7 @@ Citizens interact with 3D AI avatars representing government officials through n
 
 ---
 
-## ✨ Features
+## Features
 
 - **3D Avatar Interaction** — Realistic male/female GLB avatars with real-time lip-sync
 - **Full Voice Pipeline** — Voice In → STT → LLM → TTS → Avatar speaks back
